@@ -85,7 +85,7 @@ export default function FocusMode({ user, open: openProp, onOpenChange }) {
       {open && (
         <div
           className="shell-composer-menu"
-          style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, left: "auto", width: "max-content", minWidth: 170 }}
+          style={{ position: "absolute", top: "calc(100% + 6px)", bottom: "auto", right: 0, left: "auto", width: "max-content", minWidth: 170 }}
         >
           {FOCUS_MODES.map((m) => (
             <div key={m.key} className="shell-proj-row" onClick={() => pick(m.key)} style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>

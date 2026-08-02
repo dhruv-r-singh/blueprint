@@ -227,6 +227,61 @@ offline-from-CDNs. If you'd rather bundle Three.js properly, `npm install
 three` and swap the dynamic `<script>` loading in `CADViewer.js` for normal
 `import * as THREE from "three"` / `three/examples/jsm/...` imports.
 
+### Firebase Storage needs CORS enabled, or every format but images/video will fail to preview
+
+Chat attachments render fine as `<img>`/`<video>` tags no matter what, because
+the browser is allowed to *display* a cross-origin file without needing
+permission from the server. But every 3D loader here (STL/OBJ/FBX/3MF, plus
+the STEP path) has to actually read the file's raw bytes into JavaScript via
+`fetch()`, and that's a different, stricter browser rule: the response has to
+carry an `Access-Control-Allow-Origin` header naming this app's origin, or
+the browser blocks JS from ever seeing the bytes at all — it still downloads
+fine, just silently, with the fetch throwing a plain "Failed to fetch" that
+looks identical to a bad file. Firebase Storage buckets don't send that
+header by default, so until this is set up, **every non-image/video 3D
+upload will fail to preview**, no matter how valid the file is.
+
+This is a one-time setting on the bucket, not something fixable from the
+app's own code, and it has to be done via `gsutil` — but Google Cloud
+Console's **Cloud Shell** is a terminal in the browser, so no local install
+is needed:
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com), pick
+   this Firebase project from the project switcher (top left).
+2. Click the **Cloud Shell** icon (`>_`) in the top right toolbar. It opens a
+   terminal at the bottom of the page, already signed in and already scoped
+   to this project.
+3. In that terminal, create a file with:
+   ```
+   cat > cors.json << 'EOF'
+   [
+     {
+       "origin": ["*"],
+       "method": ["GET", "HEAD"],
+       "maxAgeSeconds": 3600,
+       "responseHeader": ["Content-Type"]
+     }
+   ]
+   EOF
+   ```
+   (`"origin": ["*"]` is the simplest option and fine here since these are
+   already-public download URLs with an unguessable token in them — swap it
+   for `["https://blueprint-drs.web.app", "https://dhruvrsingh.com"]` etc. if
+   you'd rather restrict it to known domains.)
+4. Run:
+   ```
+   gsutil cors set cors.json gs://YOUR-BUCKET-NAME.appspot.com
+   ```
+   The bucket name is the same one shown in Firebase Console → Storage (top
+   of the Files tab, looks like `blueprint-drs.appspot.com` or
+   `blueprint-drs.firebasestorage.app` depending on when the project was
+   created — use exactly what's shown there).
+5. Confirm it took: `gsutil cors get gs://YOUR-BUCKET-NAME.appspot.com`
+   should print the JSON back.
+
+No redeploy needed — this takes effect immediately for every file already in
+the bucket, old and new.
+
 ### New members automatically getting access
 
 - **Drive folder:** at creation time, the folder is set to "anyone with the

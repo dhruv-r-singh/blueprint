@@ -53,7 +53,7 @@ export default function GuidedTour({ steps, onDone }) {
   }
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 500 }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 500, pointerEvents: "none" }}>
       {rect ? (
         <div
           style={{
@@ -70,9 +70,14 @@ export default function GuidedTour({ steps, onDone }) {
           }}
         />
       ) : (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.68)" }} />
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.68)", pointerEvents: "none" }} />
       )}
 
+      {/* Wrapper above is pointer-events:none — otherwise this full-screen
+          layer silently blocks clicks on anything not inside the small
+          highlighted rect, including the account menu's Profile/Preferences
+          links once they're open (they render below the spotlighted button,
+          outside its rect). Only this card should ever intercept clicks. */}
       <div
         className="shell-card"
         style={{
@@ -83,6 +88,7 @@ export default function GuidedTour({ steps, onDone }) {
           transform: cardTransform,
           zIndex: 501,
           padding: 18,
+          pointerEvents: "auto",
         }}
       >
         <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 14, marginBottom: 6 }}>

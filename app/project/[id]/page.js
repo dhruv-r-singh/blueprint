@@ -42,7 +42,7 @@ import CADViewer, { guessCadKind } from "../../components/CADViewer";
 import GuidedTour from "../../components/GuidedTour";
 import VideoPlayer from "../../components/VideoPlayer";
 import Toggle from "../../components/Toggle";
-import { IconGear, IconMic, IconSparkle, IconLayout, IconCheckSquare, IconTarget, IconCalendar, IconChat, IconGithubMark, IconDriveMark, IconReply, IconReact, IconTranslate } from "../../components/icons";
+import { IconGear, IconMic, IconSparkle, IconLayout, IconCheckSquare, IconTarget, IconCalendar, IconChat, IconGithubMark, IconDriveMark, IconReply, IconReact, IconTranslate, IconSearch } from "../../components/icons";
 import { focusModeInfo } from "../../components/FocusMode";
 import VideoCall from "./VideoCall";
 import { useAuthGate } from "../../../lib/useAuthGate";
@@ -192,6 +192,10 @@ export default function ProjectPage() {
   const recordTimerRef = useRef(null);
   const recordCancelledRef = useRef(false);
   const recordSecondsRef = useRef(0);
+  const spectrogramCanvasRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const audioAnalyserRef = useRef(null);
+  const spectrogramRafRef = useRef(null);
   const [strokes, setStrokes] = useState([]);
   const [brushColor, setBrushColor] = useState(WHITEBOARD_COLORS[0]);
   const [brushWidth, setBrushWidth] = useState(3);
@@ -208,6 +212,7 @@ export default function ProjectPage() {
   const [translations, setTranslations] = useState({}); // messageId -> { text, loading, error, lang, sameLanguage }
   const [presenceTick, setPresenceTick] = useState(0); // bumps periodically so online/offline labels stay fresh
   const [replyingTo, setReplyingTo] = useState(null); // { id, senderName, text } | null
+  const [chatSearch, setChatSearch] = useState("");
   const [stagedAttachment, setStagedAttachment] = useState(null); // attachment fields waiting for Send, not yet posted
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [googleCalEvents, setGoogleCalEvents] = useState([]);
@@ -644,6 +649,14 @@ export default function ProjectPage() {
     )));
   }
 
+  /** True if a message's visible text/caption/attachment title/sender name contains the search query (case-insensitive). */
+  function messageMatchesSearch(m, query) {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    const haystack = [m.text, m.caption, m.title, m.senderName].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(q);
+  }
+
   function handleMsgTextChange(e) {
     const val = e.target.value;
     setMsgText(val);
@@ -739,12 +752,37 @@ export default function ProjectPage() {
       const recorder = new MediaRecorder(stream);
       recordChunksRef.current = [];
       recordCancelledRef.current = false;
+
+      // Live spectrogram, purely visual — piped from the same mic stream via
+      // an AnalyserNode. Wrapped in its own try/catch so a browser that
+      // balks at AudioContext (rare, but happens under some privacy
+      // settings) still lets voice recording itself work fine.
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioCtx();
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 128;
+        analyser.smoothingTimeConstant = 0.75;
+        source.connect(analyser);
+        audioCtxRef.current = audioCtx;
+        audioAnalyserRef.current = analyser;
+      } catch (err) {
+        audioCtxRef.current = null;
+        audioAnalyserRef.current = null;
+      }
+
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) recordChunksRef.current.push(e.data);
       };
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         clearInterval(recordTimerRef.current);
+        if (spectrogramRafRef.current) cancelAnimationFrame(spectrogramRafRef.current);
+        spectrogramRafRef.current = null;
+        audioAnalyserRef.current = null;
+        audioCtxRef.current?.close().catch(() => {});
+        audioCtxRef.current = null;
         const seconds = recordSecondsRef.current;
         setRecording(false);
         setRecordSeconds(0);
@@ -780,9 +818,33 @@ export default function ProjectPage() {
         recordSecondsRef.current += 1;
         setRecordSeconds(recordSecondsRef.current);
       }, 1000);
+      drawSpectrogram();
     } catch (err) {
       setRecordError("Couldn't access your microphone. Check browser permissions.");
     }
+  }
+
+  /** Bar-style live spectrogram, drawn each frame from the recording mic's AnalyserNode onto the small canvas in the recording bar. No-ops quietly if either isn't available. */
+  function drawSpectrogram() {
+    const analyser = audioAnalyserRef.current;
+    const canvas = spectrogramCanvasRef.current;
+    if (!analyser || !canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(data);
+    const { width, height } = canvas;
+    ctx.clearRect(0, 0, width, height);
+    const barCount = 24;
+    const step = Math.max(1, Math.floor(data.length / barCount));
+    const barWidth = width / barCount;
+    ctx.fillStyle = "#e5534b";
+    for (let i = 0; i < barCount; i++) {
+      const v = data[i * step] / 255;
+      const barHeight = Math.max(2, v * height);
+      ctx.fillRect(i * barWidth, height - barHeight, Math.max(1, barWidth - 2), barHeight);
+    }
+    spectrogramRafRef.current = requestAnimationFrame(drawSpectrogram);
   }
 
   function stopVoiceRecording() {
@@ -2053,8 +2115,26 @@ export default function ProjectPage() {
               />
               <div style={{ display: "flex", flex: 1, minHeight: 0, gap: 16 }}>
               <div className="shell-chat-panel" style={{ flex: 1, minWidth: 0 }}>
+                <div className="shell-chat-search">
+                  <IconSearch size={13} />
+                  <input
+                    value={chatSearch}
+                    onChange={(e) => setChatSearch(e.target.value)}
+                    placeholder="Search messages"
+                  />
+                  {chatSearch && (
+                    <button type="button" className="shell-chat-search-clear" onClick={() => setChatSearch("")} aria-label="Clear search">
+                      ×
+                    </button>
+                  )}
+                </div>
                 <div className="shell-msgs">
-                  {messages.map((m) => {
+                  {chatSearch.trim() && messages.filter((m) => messageMatchesSearch(m, chatSearch)).length === 0 && (
+                    <div style={{ textAlign: "center", color: "var(--s-text-3)", fontSize: 13, padding: 20 }}>
+                      No messages match &ldquo;{chatSearch.trim()}&rdquo;.
+                    </div>
+                  )}
+                  {messages.filter((m) => messageMatchesSearch(m, chatSearch)).map((m) => {
                     const isTextMsg = !m.type || m.type === "text";
                     const canTranslate = isTextMsg && m.text && !translations[m.id]?.sameLanguage;
                     return (
@@ -2414,6 +2494,7 @@ export default function ProjectPage() {
                     <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600 }}>
                       Recording… {String(Math.floor(recordSeconds / 60)).padStart(1, "0")}:{String(recordSeconds % 60).padStart(2, "0")}
                     </span>
+                    <canvas ref={spectrogramCanvasRef} className="shell-spectrogram" width={90} height={22} />
                     <button type="button" onClick={cancelVoiceRecording} className="ghost" style={{ marginLeft: "auto" }}>
                       Cancel
                     </button>

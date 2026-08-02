@@ -71,6 +71,46 @@ async function ensureOcct() {
   return window.occtimportjs();
 }
 
+// Every format below reads the model's raw bytes once via fetch() and hands
+// them to each loader's synchronous `.parse()` method, instead of letting
+// three.js's own `Loader.load(url, ...)` issue the request internally. Two
+// reasons: (1) it's one consistent code path instead of five slightly
+// different ones, and (2) it lets a failed request surface as an actual,
+// distinguishable error — a fetch() to a cross-origin URL (which every
+// Firebase Storage download link is) throws a plain "Failed to fetch"
+// TypeError when the bucket doesn't have CORS configured for this app's
+// origin, which is a completely different problem from "the file itself is
+// corrupt/unsupported" but was previously showing the exact same generic
+// message either way, making it impossible to tell which one was happening.
+class CadFetchError extends Error {
+  constructor(kind, detail) {
+    super(detail || kind);
+    this.kind = kind; // "cors" | "http" | "other"
+  }
+}
+
+async function fetchModelBytes(url) {
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    throw new CadFetchError("cors", "Network/CORS error fetching the model file.");
+  }
+  if (!res.ok) throw new CadFetchError("http", `Server returned ${res.status} for that file.`);
+  return res.arrayBuffer();
+}
+
+/** Turns a raw load failure into the specific, actionable message to show — instead of one generic string for every possible cause. */
+function describeCadError(err) {
+  if (err instanceof CadFetchError && err.kind === "cors") {
+    return "Couldn't download that file to preview it. This almost always means the Firebase Storage bucket doesn't have CORS enabled for this app's domain yet (a one-time setup step, not a bad file). See SETUP_NOTES.md for the fix.";
+  }
+  if (err instanceof CadFetchError && err.kind === "http") {
+    return `Couldn't download that file (${err.message}). The upload may have failed or been removed.`;
+  }
+  return "Couldn't read that file as a 3D model. It may be corrupted, or this exact variant of the format isn't supported yet.";
+}
+
 /** Guesses the loader to use from a filename/URL's extension. */
 export function guessCadKind(name) {
   const ext = (name || "").split(".").pop()?.toLowerCase();
@@ -142,34 +182,48 @@ export default function CADViewer({ url, kind, onClose }) {
         function onError(err) {
           console.error("CAD load failed:", err);
           if (!disposed) {
-            setError("Couldn't load that file — it may not be a valid model, or the format isn't supported yet.");
+            setError(describeCadError(err));
             setStatus("error");
           }
         }
 
         if (kind === "stl") {
-          new THREE.STLLoader().load(
-            url,
-            (geometry) => {
-              const material = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, metalness: 0.15, roughness: 0.55 });
-              onLoaded(new THREE.Mesh(geometry, material));
-            },
-            undefined,
-            onError
-          );
+          try {
+            const buffer = await fetchModelBytes(url);
+            const geometry = new THREE.STLLoader().parse(buffer);
+            const material = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, metalness: 0.15, roughness: 0.55 });
+            onLoaded(new THREE.Mesh(geometry, material));
+          } catch (err) {
+            onError(err);
+          }
         } else if (kind === "obj") {
-          new THREE.OBJLoader().load(url, onLoaded, undefined, onError);
+          try {
+            const buffer = await fetchModelBytes(url);
+            const text = new TextDecoder().decode(buffer);
+            onLoaded(new THREE.OBJLoader().parse(text));
+          } catch (err) {
+            onError(err);
+          }
         } else if (kind === "gltf") {
           new THREE.GLTFLoader().load(url, (gltf) => onLoaded(gltf.scene), undefined, onError);
         } else if (kind === "fbx") {
-          new THREE.FBXLoader().load(url, onLoaded, undefined, onError);
+          try {
+            const buffer = await fetchModelBytes(url);
+            onLoaded(new THREE.FBXLoader().parse(buffer, ""));
+          } catch (err) {
+            onError(err);
+          }
         } else if (kind === "3mf") {
-          new THREE.ThreeMFLoader().load(url, onLoaded, undefined, onError);
+          try {
+            const buffer = await fetchModelBytes(url);
+            onLoaded(new THREE.ThreeMFLoader().parse(buffer));
+          } catch (err) {
+            onError(err);
+          }
         } else if (kind === "step") {
           try {
             const occt = await ensureOcct();
-            const res = await fetch(url);
-            const buffer = await res.arrayBuffer();
+            const buffer = await fetchModelBytes(url);
             const result = occt.ReadStepFile(new Uint8Array(buffer), null);
             if (!result.success || !result.meshes?.length) throw new Error("Couldn't read that STEP file.");
             const group = new THREE.Group();

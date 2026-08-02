@@ -822,6 +822,38 @@ img.shell-avatar {
   border-radius: var(--s-radius-lg);
   overflow: hidden;
 }
+.shell-chat-search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--s-border);
+  color: var(--s-text-3);
+}
+.shell-chat-search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--s-text);
+  font-size: 13px;
+  font-family: inherit;
+}
+.shell-chat-search input:focus {
+  outline: none;
+}
+.shell-chat-search-clear {
+  background: transparent;
+  border: none;
+  color: var(--s-text-3);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+}
+.shell-chat-search-clear:hover {
+  color: var(--s-text);
+}
 .shell-msgs {
   flex: 1;
   overflow-y: auto;
@@ -985,7 +1017,11 @@ body.compact-mode .shell-task-card {
 .shell-recording-bar {
   align-items: center;
   gap: 10px;
-  padding: 0 14px;
+  padding: 14px;
+}
+.shell-spectrogram {
+  display: block;
+  flex: none;
 }
 .shell-recording-dot {
   width: 9px;
