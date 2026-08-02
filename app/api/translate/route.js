@@ -23,8 +23,9 @@ export async function POST(request) {
   }
 
   try {
-    const { text: translatedText } = await translate(text, { to: target });
-    return NextResponse.json({ translatedText });
+    const result = await translate(text, { to: target });
+    const detected = result?.from?.language?.iso || null;
+    return NextResponse.json({ translatedText: result.text, detected, sameLanguage: Boolean(detected && detected === target) });
   } catch (err) {
     console.error("Translate request failed:", err);
     if (err.name === "TooManyRequestsError") {

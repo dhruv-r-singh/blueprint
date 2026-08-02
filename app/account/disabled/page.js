@@ -46,7 +46,7 @@ export default function AccountDisabledPage() {
           Your account is disabled
         </h1>
         <p style={{ fontSize: 13.5, color: "var(--s-text-2)", marginBottom: 22 }}>
-          You disabled this account from Preferences. Reactivate it to pick up right where you left off — nothing was deleted.
+          You disabled this account from Preferences. Reactivate it to pick up right where you left off. Nothing was deleted.
         </p>
         <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
           <button onClick={reactivate} disabled={busy} className="shell-task-add-btn" style={{ padding: "10px 18px" }}>

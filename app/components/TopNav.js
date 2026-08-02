@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../../lib/firebase";
@@ -28,18 +28,29 @@ function contrastInk(hex) {
 }
 
 export default function TopNav({ user, extraLink }) {
-  const [open, setOpen] = useState(false);
+  // Single switch for "which of the two topbar dropdowns is open" — the
+  // status/focus picker (FocusMode) and this hamburger/account menu — so
+  // opening one always closes the other instead of both stacking up.
+  const [openMenu, setOpenMenu] = useState(null); // null | "hamburger" | "status"
+  const open = openMenu === "hamburger";
   const [avatarUrl, setAvatarUrl] = useState("");
   const ref = useRef(null);
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     function onClickOutside(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target)) setOpenMenu(null);
     }
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
+
+  /** Used on nav links that can point at the page already showing — skips the redundant navigation/remount instead of reloading a page you're already on. */
+  function goTo(e, href) {
+    setOpenMenu(null);
+    if (href === pathname) e.preventDefault();
+  }
 
   // TopNav mounts on every signed-in page, so this is the one place that
   // reliably covers "the app is open" for the online/offline presence
@@ -93,24 +104,37 @@ export default function TopNav({ user, extraLink }) {
   }, [user?.uid]);
 
   async function handleSignOut() {
-    setOpen(false);
+    setOpenMenu(null);
     await signOut(auth);
     router.push("/");
   }
 
   return (
     <div className="shell-topbar">
-      <Link href="/" className="shell-topbar-brand brand-wordmark" aria-label="Blueprint home">
+      <Link
+        href="/"
+        className="shell-topbar-brand brand-wordmark"
+        aria-label="Blueprint home"
+        onClick={(e) => goTo(e, "/")}
+      >
         Blueprint
       </Link>
 
       <div className="shell-topbar-right" ref={ref}>
-        {user && <FocusMode user={user} />}
+        {user && (
+          <FocusMode user={user} open={openMenu === "status"} onOpenChange={(v) => setOpenMenu(v ? "status" : null)} />
+        )}
 
         {user && <span className="shell-topbar-divider" />}
 
         {user && (
-          <button type="button" className="shell-topbar-user" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          <button
+            type="button"
+            className="shell-topbar-user"
+            data-tour="account-menu"
+            onClick={() => setOpenMenu(open ? null : "hamburger")}
+            aria-expanded={open}
+          >
             {avatarUrl || user.photoURL ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={avatarUrl || user.photoURL} alt="" className="shell-avatar" />
@@ -126,7 +150,7 @@ export default function TopNav({ user, extraLink }) {
           <button
             type="button"
             className="shell-hamburger"
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => setOpenMenu(open ? null : "hamburger")}
             aria-label="Menu"
             aria-expanded={open}
           >
@@ -139,17 +163,17 @@ export default function TopNav({ user, extraLink }) {
         {open && (
           <div className="shell-nav-menu" onClick={(e) => e.stopPropagation()}>
             <div className="shell-nav-menu-user">{user?.displayName || user?.email || "Account"}</div>
-            <Link href="/" className="shell-nav-menu-item" onClick={() => setOpen(false)}>
+            <Link href="/" className="shell-nav-menu-item" onClick={(e) => goTo(e, "/")}>
               Home
             </Link>
-            <Link href="/profile" className="shell-nav-menu-item" onClick={() => setOpen(false)}>
+            <Link href="/profile" className="shell-nav-menu-item" onClick={(e) => goTo(e, "/profile")}>
               Profile
             </Link>
-            <Link href="/account" className="shell-nav-menu-item" onClick={() => setOpen(false)}>
+            <Link href="/account" className="shell-nav-menu-item" onClick={(e) => goTo(e, "/account")}>
               Preferences
             </Link>
             {extraLink && (
-              <Link href={extraLink.href} className="shell-nav-menu-item" onClick={() => setOpen(false)}>
+              <Link href={extraLink.href} className="shell-nav-menu-item" onClick={(e) => goTo(e, extraLink.href)}>
                 {extraLink.label}
               </Link>
             )}

@@ -1,16 +1,24 @@
 "use client";
 
-// In-app 3D viewer for CAD exports (STL / OBJ / GLTF / GLB) attached to a
-// project chat. There's no npm access to this repo's package.json from
-// this session, so instead of adding three.js as a dependency, this loads
-// the same UMD builds Anthropic's own three.js examples use, straight from
-// jsdelivr (which mirrors the three npm package's files 1:1) — no bundler
-// config needed, works in any client component.
+// In-app 3D viewer for CAD exports (STL / OBJ / GLTF / GLB / 3MF / FBX /
+// STEP / STP) attached to a project chat. There's no npm access to this
+// repo's package.json from this session, so instead of adding three.js (and
+// its STEP-import dependency) as a real dependency, this loads the same UMD
+// builds straight from jsdelivr (which mirrors each npm package's files
+// 1:1) — no bundler config needed, works in any client component.
+//
+// STEP/STP is the odd one out: browsers can't parse it natively, and
+// three.js has no STEP loader at all (it's a full CAD boundary-representation
+// format, not a triangle mesh format like the others). occt-import-js
+// (https://github.com/kovacsv/occt-import-js) is a WASM build of OpenCascade
+// — the same engine 3dviewer.net uses — that decodes STEP into a
+// three.js-compatible triangle mesh entirely in the browser.
 
 import { useEffect, useRef, useState } from "react";
 
 const THREE_VERSION = "0.128.0";
 const CDN_BASE = `https://cdn.jsdelivr.net/npm/three@${THREE_VERSION}`;
+const OCCT_VERSION = "0.0.23";
 
 const scriptCache = new Map();
 function loadScript(src) {
@@ -44,8 +52,23 @@ async function ensureThree() {
     loadScript(`${CDN_BASE}/examples/js/loaders/STLLoader.js`),
     loadScript(`${CDN_BASE}/examples/js/loaders/OBJLoader.js`),
     loadScript(`${CDN_BASE}/examples/js/loaders/GLTFLoader.js`),
+    // FBXLoader and 3MFLoader both decode zip-compressed data streams via
+    // the `fflate` global, so it has to be on the page before either loads.
+    loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js").then(() =>
+      Promise.all([
+        loadScript(`${CDN_BASE}/examples/js/loaders/FBXLoader.js`),
+        loadScript(`${CDN_BASE}/examples/js/loaders/3MFLoader.js`),
+      ])
+    ),
   ]);
   return window.THREE;
+}
+
+/** Lazily loads occt-import-js (WASM OpenCascade) for STEP/STP files, returning the initialized module. */
+async function ensureOcct() {
+  await loadScript(`https://cdn.jsdelivr.net/npm/occt-import-js@${OCCT_VERSION}/dist/occt-import-js.js`);
+  if (!window.occtimportjs) throw new Error("STEP viewer library failed to load.");
+  return window.occtimportjs();
 }
 
 /** Guesses the loader to use from a filename/URL's extension. */
@@ -54,6 +77,9 @@ export function guessCadKind(name) {
   if (ext === "stl") return "stl";
   if (ext === "obj") return "obj";
   if (ext === "gltf" || ext === "glb") return "gltf";
+  if (ext === "3mf") return "3mf";
+  if (ext === "fbx") return "fbx";
+  if (ext === "step" || ext === "stp") return "step";
   return null;
 }
 
@@ -135,6 +161,36 @@ export default function CADViewer({ url, kind, onClose }) {
           new THREE.OBJLoader().load(url, onLoaded, undefined, onError);
         } else if (kind === "gltf") {
           new THREE.GLTFLoader().load(url, (gltf) => onLoaded(gltf.scene), undefined, onError);
+        } else if (kind === "fbx") {
+          new THREE.FBXLoader().load(url, onLoaded, undefined, onError);
+        } else if (kind === "3mf") {
+          new THREE.ThreeMFLoader().load(url, onLoaded, undefined, onError);
+        } else if (kind === "step") {
+          try {
+            const occt = await ensureOcct();
+            const res = await fetch(url);
+            const buffer = await res.arrayBuffer();
+            const result = occt.ReadStepFile(new Uint8Array(buffer), null);
+            if (!result.success || !result.meshes?.length) throw new Error("Couldn't read that STEP file.");
+            const group = new THREE.Group();
+            for (const resultMesh of result.meshes) {
+              const geometry = new THREE.BufferGeometry();
+              geometry.setAttribute("position", new THREE.Float32BufferAttribute(resultMesh.attributes.position.array, 3));
+              if (resultMesh.attributes.normal) {
+                geometry.setAttribute("normal", new THREE.Float32BufferAttribute(resultMesh.attributes.normal.array, 3));
+              }
+              geometry.setIndex(new THREE.BufferAttribute(Uint32Array.from(resultMesh.index.array), 1));
+              const material = new THREE.MeshStandardMaterial({
+                color: resultMesh.color ? new THREE.Color(resultMesh.color[0], resultMesh.color[1], resultMesh.color[2]) : 0x9aa0a6,
+                metalness: 0.1,
+                roughness: 0.6,
+              });
+              group.add(new THREE.Mesh(geometry, material));
+            }
+            onLoaded(group);
+          } catch (err) {
+            onError(err);
+          }
         } else {
           onError(new Error("Unsupported CAD format"));
         }

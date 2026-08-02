@@ -48,7 +48,7 @@ export default function JoinPage() {
         router.replace(`/project/${p.id}`);
       } catch (err) {
         console.error("Join failed:", err);
-        setError("Couldn't join that project — " + (err.code || err.message || "try again"));
+        setError("Couldn't join that project. " + (err.code || err.message || "Try again."));
         setStatus("error");
       }
     })();
@@ -140,7 +140,7 @@ export default function JoinPage() {
           {user && status === "not-found" && (
             <>
               <div style={{ color: "var(--s-text-2)", fontSize: 14, marginBottom: 12 }}>
-                This invite link isn&rsquo;t valid — it may have been regenerated.
+                This invite link isn&rsquo;t valid. It may have been regenerated.
               </div>
               <button className="shell-auth-btn primary" onClick={() => router.push("/")}>
                 Go to Blueprint

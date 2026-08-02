@@ -55,19 +55,24 @@ export default function OnboardingPage() {
       if (name.trim() !== user.displayName) {
         await updateProfile(auth.currentUser, { displayName: name.trim() });
       }
+      // Commit whatever's still sitting in the skill input, unadded, so
+      // clicking Continue right after typing a skill (without pressing
+      // Enter or picking it from the dropdown first) doesn't silently drop it.
+      const pending = newSkill.trim();
+      const finalSkills = pending && !skills.includes(pending) ? [...skills, pending] : skills;
       await setDoc(
         doc(db, "profiles", user.uid),
         {
           name: name.trim(),
           headline: headline.trim(),
-          skills,
+          skills: finalSkills,
           onboarded: true,
         },
         { merge: true }
       );
       router.replace("/create");
     } catch (err) {
-      setError("Couldn't save that — " + (err.message || "try again"));
+      setError("Couldn't save that. " + (err.message || "Try again."));
       setSaving(false);
     }
   }
@@ -79,7 +84,7 @@ export default function OnboardingPage() {
       await setDoc(doc(db, "profiles", user.uid), { onboarded: true }, { merge: true });
       router.replace("/create");
     } catch (err) {
-      setError("Couldn't continue — " + (err.message || "try again"));
+      setError("Couldn't continue. " + (err.message || "Try again."));
       setSaving(false);
     }
   }
@@ -91,7 +96,7 @@ export default function OnboardingPage() {
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <form onSubmit={finishOnboarding} className="shell-card" style={{ width: "100%", maxWidth: 460, padding: 28 }}>
           <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 22, marginBottom: 6 }}>
-            Welcome — quick intro first
+            Welcome, quick intro first
           </div>
           <div style={{ color: "var(--s-text-2)", fontSize: 13.5, marginBottom: 24 }}>
             Just enough so teammates know who you are before you start (or join) a project. Takes a minute.

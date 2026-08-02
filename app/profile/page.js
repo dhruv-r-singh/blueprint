@@ -6,13 +6,13 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../../lib/firebase";
 import { searchSkills } from "../../lib/skillsCatalog";
-import { integrationsDocPath, listPublicGithubRepos } from "../../lib/integrations";
+import { listPublicGithubRepos } from "../../lib/integrations";
 import { uploadFile } from "../../lib/storage";
 import { useAuthGate } from "../../lib/useAuthGate";
 import Autocomplete from "../components/Autocomplete";
 import AvatarEditor from "../components/AvatarEditor";
 import TopNav from "../components/TopNav";
-import { IconPencil, IconStar, IconGithubMark } from "../components/icons";
+import { IconPencil, IconStar, IconGithubMark, IconLinkedinMark } from "../components/icons";
 
 export default function ProfilePage() {
   const [user, setUser] = useState(undefined);
@@ -32,7 +32,9 @@ export default function ProfilePage() {
   const [newPortfolioTitle, setNewPortfolioTitle] = useState("");
   const [newPortfolioUrl, setNewPortfolioUrl] = useState("");
   const [newPortfolioDesc, setNewPortfolioDesc] = useState("");
-  const [integrations, setIntegrations] = useState(null);
+  const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [linkedinDraft, setLinkedinDraft] = useState("");
+  const [editingLinkedin, setEditingLinkedin] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
@@ -40,14 +42,6 @@ export default function ProfilePage() {
   }, []);
 
   useAuthGate(user);
-
-  useEffect(() => {
-    if (!user) return;
-    const unsub = onSnapshot(doc(db, ...integrationsDocPath(user.uid)), (snap) => {
-      setIntegrations(snap.exists() ? snap.data() : {});
-    });
-    return () => unsub();
-  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -59,6 +53,7 @@ export default function ProfilePage() {
         setGithubUsername(snap.data().githubUsername || "");
         setAvatarUrl(snap.data().avatarUrl || "");
         setPortfolio(snap.data().portfolio || []);
+        setLinkedinUrl(snap.data().linkedinUrl || "");
       }
     })();
   }, [user]);
@@ -87,6 +82,22 @@ export default function ProfilePage() {
 
   function removePortfolioItem(i) {
     savePortfolio(portfolio.filter((_, idx) => idx !== i));
+  }
+
+  async function saveLinkedinUrl(e) {
+    e.preventDefault();
+    if (!user) return;
+    let url = linkedinDraft.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    try {
+      await setDoc(doc(db, "profiles", user.uid), { linkedinUrl: url }, { merge: true });
+      setLinkedinUrl(url);
+      setEditingLinkedin(false);
+      setLinkedinDraft("");
+    } catch (err) {
+      console.error("Failed to save LinkedIn URL:", err);
+    }
   }
 
   async function handleAvatarSave(blob) {
@@ -149,6 +160,15 @@ export default function ProfilePage() {
     setSkills(next);
     saveProfile(next, headline);
   }
+
+  // LinkedIn's "Sign In with LinkedIn using OpenID Connect" product — the
+  // only LinkedIn auth product this app (or most apps) can get approved
+  // without a LinkedIn partnership — only ever hands back name/email/photo
+  // claims, never a public profile URL or vanity slug. There's no field to
+  // auto-derive github.com/{username}-style; a real profile link can only
+  // come from the person typing it in themselves (see the Links section
+  // below), gated on having actually linked LinkedIn as a sign-in method.
+  const linkedinConnected = (user?.providerData || []).some((p) => p.providerId === "oidc.linkedin");
 
   // Hard auth gate: render nothing at all — not even the topbar — until we
   // know for sure someone's signed in. useAuthGate above sends
@@ -221,7 +241,7 @@ export default function ProfilePage() {
                   value={headline}
                   onChange={(e) => setHeadline(e.target.value)}
                   onBlur={() => saveProfile(skills, headline)}
-                  placeholder="Add a headline — e.g. Firmware & embedded systems"
+                  placeholder="Add a headline, e.g. Firmware & embedded systems"
                   style={{
                     background: "transparent",
                     border: "none",
@@ -236,35 +256,69 @@ export default function ProfilePage() {
             </div>
 
             <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
-              Connections
+              Links
             </p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 28 }}>
-              {[
-                { label: "Google Drive", connected: Boolean(integrations?.driveAccessToken) },
-                { label: "GitHub", connected: Boolean(integrations?.githubAccessToken) },
-              ].map((c) => (
-                <span
-                  key={c.label}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 7,
-                    fontSize: 12,
-                    padding: "6px 12px",
-                    borderRadius: 999,
-                    border: "1px solid var(--s-border)",
-                    background: "var(--s-bg-side)",
-                    color: c.connected ? "var(--s-text)" : "var(--s-text-3)",
-                  }}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28, alignItems: "flex-start" }}>
+              {githubUsername && (
+                <a
+                  href={`https://github.com/${githubUsername}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shell-attachment-card"
                 >
-                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: c.connected ? "var(--s-green, #5fbf8f)" : "var(--s-text-3)" }} />
-                  {c.label} {c.connected ? "connected" : "not connected"}
+                  <IconGithubMark size={13} />
+                  <span className="shell-attachment-title">github.com/{githubUsername}</span>
+                </a>
+              )}
+
+              {linkedinConnected && linkedinUrl && !editingLinkedin && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <a href={linkedinUrl} target="_blank" rel="noopener noreferrer" className="shell-attachment-card">
+                    <IconLinkedinMark size={13} />
+                    <span className="shell-attachment-title">{linkedinUrl.replace(/^https?:\/\//i, "")}</span>
+                  </a>
+                  <button
+                    type="button"
+                    className="ghost"
+                    style={{ fontSize: 11 }}
+                    onClick={() => {
+                      setLinkedinDraft(linkedinUrl);
+                      setEditingLinkedin(true);
+                    }}
+                  >
+                    Edit
+                  </button>
+                </div>
+              )}
+
+              {linkedinConnected && (!linkedinUrl || editingLinkedin) && (
+                <form onSubmit={saveLinkedinUrl} style={{ display: "flex", gap: 8 }}>
+                  <span style={{ display: "flex", alignItems: "center", color: "var(--s-text-3)" }}>
+                    <IconLinkedinMark size={13} />
+                  </span>
+                  <input
+                    value={linkedinDraft}
+                    onChange={(e) => setLinkedinDraft(e.target.value)}
+                    placeholder="linkedin.com/in/yourname"
+                    autoFocus={editingLinkedin}
+                    className="shell-input"
+                    style={{ fontSize: 12.5, padding: "6px 10px" }}
+                  />
+                  <button type="submit" className="shell-task-add-btn" style={{ fontSize: 11.5, padding: "0 12px" }}>
+                    Save
+                  </button>
+                  {editingLinkedin && (
+                    <button type="button" className="ghost" style={{ fontSize: 11.5 }} onClick={() => setEditingLinkedin(false)}>
+                      Cancel
+                    </button>
+                  )}
+                </form>
+              )}
+
+              {!githubUsername && !linkedinConnected && (
+                <span style={{ fontSize: 12, color: "var(--s-text-3)" }}>
+                  Connect GitHub or LinkedIn in <Link href="/account" style={{ color: "var(--s-amber)" }}>Preferences</Link> to show links here.
                 </span>
-              ))}
-              {(!integrations?.driveAccessToken || !integrations?.githubAccessToken) && (
-                <Link href="/account" style={{ fontSize: 12, color: "var(--s-amber)", alignSelf: "center" }}>
-                  Connect in Preferences →
-                </Link>
               )}
             </div>
 
@@ -388,14 +442,14 @@ export default function ProfilePage() {
               ))}
 
               {portfolio.length === 0 && githubRepos.length === 0 && !reposLoading && (
-                <span style={{ fontSize: 12, color: "var(--s-text-3)" }}>No portfolio items yet — add projects, case studies, or work samples.</span>
+                <span style={{ fontSize: 12, color: "var(--s-text-3)" }}>No portfolio items yet. Add projects, case studies, or work samples.</span>
               )}
             </div>
             <form onSubmit={addPortfolioItem} style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 480 }}>
               <input
                 value={newPortfolioTitle}
                 onChange={(e) => setNewPortfolioTitle(e.target.value)}
-                placeholder="Title — e.g. Blueprint mobile redesign"
+                placeholder="Title, e.g. Blueprint mobile redesign"
                 className="shell-input"
                 style={{ fontFamily: "inherit", fontSize: 13, padding: 10 }}
               />

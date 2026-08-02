@@ -17,7 +17,7 @@ export default function MfaChallenge({ error, onResolved, onCancel }) {
   try {
     resolver = getMultiFactorResolver(auth, error);
   } catch (e) {
-    resolverError = e.message || "Couldn't start the two-factor challenge — try signing in again.";
+    resolverError = e.message || "Couldn't start the two-factor challenge. Try signing in again.";
   }
 
   const [selectedHint, setSelectedHint] = useState(resolver?.hints?.[0] || null);
@@ -71,7 +71,7 @@ export default function MfaChallenge({ error, onResolved, onCancel }) {
       const result = await resolver.resolveSignIn(assertion);
       onResolved(result);
     } catch (e) {
-      setErr(e.message || "That code didn't work — try again.");
+      setErr(e.message || "That code didn't work. Try again.");
     } finally {
       setBusy(false);
     }

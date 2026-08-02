@@ -11,11 +11,11 @@ import ParticlesBackground from "./components/ParticlesBackground";
 const FEATURES = [
   {
     title: "Find your team",
-    desc: "Post the roles your project needs and get matched with people whose skills actually fit — not just whoever saw the group chat first.",
+    desc: "Post the roles your project needs and get matched with people whose skills actually fit, not just whoever saw the group chat first.",
   },
   {
     title: "Everything in one place",
-    desc: "Tasks, chat, meetings, a shared whiteboard, and calendar — no juggling five different apps to keep a project moving.",
+    desc: "Tasks, chat, meetings, a shared whiteboard, and calendar, no juggling five different apps to keep a project moving.",
   },
   {
     title: "Your tools, connected",
@@ -70,7 +70,7 @@ export default function Page() {
         }
       } catch (err) {
         console.error("Redirect lookup failed:", err);
-        setError("Couldn't load your projects — " + (err.code || err.message || "try again"));
+        setError("Couldn't load your projects. " + (err.code || err.message || "Try again."));
       }
     })();
   }, [user, router]);
@@ -101,7 +101,7 @@ export default function Page() {
               Blueprint
             </div>
             <p style={{ fontSize: "clamp(15px, 2vw, 19px)", color: "var(--s-text-2)", maxWidth: 520, marginBottom: 34, lineHeight: 1.5 }}>
-              Find the team for what you&rsquo;re building — then run the whole project without leaving the tab.
+              Find the team for what you&rsquo;re building, then run the whole project without leaving the tab.
             </p>
 
             {error && <p className="notice" style={{ maxWidth: 420 }}>{error}</p>}

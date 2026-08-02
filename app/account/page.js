@@ -21,6 +21,7 @@ import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePu
 import { useAuthGate } from "../../lib/useAuthGate";
 import { qrCodeUrl } from "../../lib/inviteCode";
 import { IconPhone, IconLock } from "../components/icons";
+import ColorPicker from "../components/ColorPicker";
 import {
   enrolledFactors,
   startPhoneEnrollment,
@@ -92,10 +93,6 @@ const ACCENT_PRESETS = [
   { label: "Green", value: "#5fbf8f" },
 ];
 
-function isValidHex(v) {
-  return /^#[0-9a-fA-F]{6}$/.test(v);
-}
-
 // Same list translateMessage() in project/[id]/page.js accepts — kept here
 // so the dropdown and the actual translate call can't drift apart.
 const TRANSLATE_LANGUAGES = [
@@ -143,8 +140,6 @@ export default function AccountSettingsPage() {
   const [micDevices, setMicDevices] = useState([]);
   const [camDevices, setCamDevices] = useState([]);
   const [deviceError, setDeviceError] = useState("");
-  const [accentHexDraft, setAccentHexDraft] = useState("");
-  const [accentHexError, setAccentHexError] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -225,10 +220,10 @@ export default function AccountSettingsPage() {
       const savePublicFn = (patch) => setDoc(doc(db, "profiles", user.uid), patch, { merge: true });
       if (entry.integration === "drive") {
         const got = await saveGoogleCredential(result, saveFn());
-        setNotice(got ? "Google Drive & Calendar connected." : "Signed in with Google, but Drive/Calendar access wasn't granted — try again and allow the permissions.");
+        setNotice(got ? "Google Drive & Calendar connected." : "Signed in with Google, but Drive/Calendar access wasn't granted. Try again and allow the permissions.");
       } else if (entry.integration === "github") {
         const got = await saveGithubCredential(result, saveFn(), savePublicFn);
-        setNotice(got ? "GitHub connected." : "Signed in with GitHub, but repo access wasn't granted — try again and allow it.");
+        setNotice(got ? "GitHub connected." : "Signed in with GitHub, but repo access wasn't granted. Try again and allow it.");
       } else {
         setNotice(`${entry.label} connected.`);
       }
@@ -245,7 +240,7 @@ export default function AccountSettingsPage() {
     setError("");
     setNotice("");
     if (linkedIds.size <= 1) {
-      setError("You need at least one sign-in method connected — link another before removing this one.");
+      setError("You need at least one sign-in method connected. Link another before removing this one.");
       return;
     }
     setBusy(entry.id);
@@ -280,9 +275,9 @@ export default function AccountSettingsPage() {
 
   function mfaFriendlyError(err) {
     if (err.code === "auth/requires-recent-login") {
-      return "This needs a fresh sign-in first — reconnect one of your accounts above (Connected accounts), then try again.";
+      return "This needs a fresh sign-in first. Reconnect one of your accounts above (Connected accounts), then try again.";
     }
-    return err.message || "Something went wrong — try again.";
+    return err.message || "Something went wrong. Try again.";
   }
 
   async function handleSendPhoneCode(e) {
@@ -367,7 +362,7 @@ export default function AccountSettingsPage() {
       await updateProfile(auth.currentUser, { displayName: displayName.trim() });
       setUser({ ...auth.currentUser });
     } catch (err) {
-      setError("Couldn't update your name — " + (err.code || "try again"));
+      setError("Couldn't update your name. " + (err.code || "Try again."));
     } finally {
       setSavingName(false);
     }
@@ -375,7 +370,7 @@ export default function AccountSettingsPage() {
 
   async function handleDisableAccount() {
     if (!user) return;
-    if (!window.confirm("Disable your account? You'll be signed out immediately and won't be able to use Blueprint until you reactivate — nothing is deleted, and you can undo this any time by signing back in.")) {
+    if (!window.confirm("Disable your account? You'll be signed out immediately and won't be able to use Blueprint until you reactivate. Nothing is deleted, and you can undo this any time by signing back in.")) {
       return;
     }
     setDisablingAccount(true);
@@ -385,7 +380,7 @@ export default function AccountSettingsPage() {
       await signOut(auth);
       router.replace("/");
     } catch (err) {
-      setError("Couldn't disable your account — " + (err.message || "try again"));
+      setError("Couldn't disable your account. " + (err.message || "Try again."));
       setDisablingAccount(false);
     }
   }
@@ -415,9 +410,9 @@ export default function AccountSettingsPage() {
       router.replace("/");
     } catch (err) {
       if (err.code === "auth/requires-recent-login") {
-        setError("This needs a fresh sign-in first — reconnect one of your accounts above (Connected accounts), then try deleting again.");
+        setError("This needs a fresh sign-in first. Reconnect one of your accounts above (Connected accounts), then try deleting again.");
       } else {
-        setError("Couldn't delete your account — " + (err.message || "try again"));
+        setError("Couldn't delete your account. " + (err.message || "Try again."));
       }
       setDeletingAccount(false);
     }
@@ -538,8 +533,8 @@ export default function AccountSettingsPage() {
               </div>
               <div style={{ fontSize: 11, color: "var(--s-text-3)", marginBottom: 30 }}>
                 Connecting Google or GitHub here (or signing in with them) automatically enables project
-                Drive folders / GitHub repos and chat attachments — no separate setup. Drive access now
-                renews itself in the background, so you shouldn't need "Refresh Drive access" above — it's
+                Drive folders / GitHub repos and chat attachments, no separate setup needed. Drive access now
+                renews itself in the background, so you shouldn't need "Refresh Drive access" above. It's
                 there as a manual fallback if it ever does lapse.
               </div>
 
@@ -561,7 +556,7 @@ export default function AccountSettingsPage() {
                 </div>
               )}
               {mfaFactors.length === 0 && (
-                <p style={{ fontSize: 12, color: "var(--s-text-3)", marginBottom: 14 }}>Not turned on yet — every future sign-in will ask for a second factor once you add one.</p>
+                <p style={{ fontSize: 12, color: "var(--s-text-3)", marginBottom: 14 }}>Not turned on yet. Every future sign-in will ask for a second factor once you add one.</p>
               )}
 
               {!mfaMode && (
@@ -691,7 +686,7 @@ export default function AccountSettingsPage() {
               {deviceError && <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 12 }}>{deviceError}</p>}
               <p style={{ fontSize: 11.5, color: "var(--s-text-3)", marginBottom: 24 }}>
                 Used as the default the next time you start a Meeting in any project. Device names only show up
-                once you've granted mic/camera permission at least once — that's your browser, not this app.
+                once you've granted mic/camera permission at least once. That's your browser, not this app.
               </p>
 
               <p style={sectionLabelStyle()}>Joining a meeting</p>
@@ -751,7 +746,7 @@ export default function AccountSettingsPage() {
               </div>
 
               <p style={sectionLabelStyle()}>Accent color</p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
                 {ACCENT_PRESETS.map((p) => {
                   const active = (prefs.accentColor || "") === p.value;
                   return (
@@ -759,11 +754,7 @@ export default function AccountSettingsPage() {
                       key={p.label}
                       type="button"
                       title={p.label}
-                      onClick={() => {
-                        savePreference({ accentColor: p.value });
-                        setAccentHexDraft("");
-                        setAccentHexError(false);
-                      }}
+                      onClick={() => savePreference({ accentColor: p.value })}
                       style={{
                         width: 30,
                         height: 30,
@@ -778,46 +769,12 @@ export default function AccountSettingsPage() {
                   );
                 })}
               </div>
-              {/* The "custom" part of the custom color picker — a plain hex
-                  field instead of the native <input type="color"> swatch
-                  (which renders as a small OS-styled square that clashes
-                  with every other control here), with a live preview chip
-                  next to it. */}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                <span
-                  style={{
-                    width: 30,
-                    height: 30,
-                    borderRadius: "50%",
-                    flex: "none",
-                    background: isValidHex(accentHexDraft) ? accentHexDraft : prefs.accentColor || "var(--s-bg-elevated)",
-                    border: "2px solid var(--s-border)",
-                  }}
-                />
-                <input
-                  value={accentHexDraft || prefs.accentColor || ""}
-                  onChange={(e) => {
-                    const v = e.target.value.startsWith("#") ? e.target.value : `#${e.target.value}`;
-                    setAccentHexDraft(v);
-                    setAccentHexError(false);
-                  }}
-                  onBlur={() => {
-                    if (!accentHexDraft) return;
-                    if (isValidHex(accentHexDraft)) {
-                      savePreference({ accentColor: accentHexDraft });
-                      setAccentHexError(false);
-                    } else {
-                      setAccentHexError(true);
-                    }
-                  }}
-                  onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-                  placeholder="#6fa8d8"
-                  maxLength={7}
-                  className="shell-input"
-                  style={{ width: 140, fontFamily: "monospace" }}
-                />
-                {accentHexError && <span style={{ fontSize: 11.5, color: "#e5534b" }}>Not a valid hex color.</span>}
-              </div>
+              {/* The actual custom picker — a draggable saturation/value
+                  square plus a hue strip, not a typed hex field. */}
+              <ColorPicker
+                value={prefs.accentColor || "#e0a339"}
+                onChange={(hex) => savePreference({ accentColor: hex })}
+              />
               <p style={{ fontSize: 11.5, color: "var(--s-text-3)", marginBottom: 24 }}>
                 Applies to buttons, active states, and highlights app-wide. &ldquo;Default&rdquo; matches the built-in monotone look.
               </p>
@@ -831,7 +788,7 @@ export default function AccountSettingsPage() {
                 <Toggle checked={Boolean(prefs.compactMode)} onChange={(v) => savePreference({ compactMode: v })} />
               </div>
 
-              <p style={sectionLabelStyle()}>Translation language</p>
+              <p style={sectionLabelStyle()}>Your language</p>
               <select
                 value={prefs.translateLanguage || ""}
                 onChange={(e) => savePreference({ translateLanguage: e.target.value })}
@@ -843,7 +800,7 @@ export default function AccountSettingsPage() {
                 ))}
               </select>
               <p style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>
-                Used when you tap &ldquo;Translate&rdquo; under a chat message.
+                Chat messages translate into this language. Once a message resolves as already being in it, the Translate option drops off that message.
               </p>
             </>
           )}

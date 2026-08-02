@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { collection, addDoc, doc, onSnapshot, updateDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, doc, onSnapshot, updateDoc, serverTimestamp, query, where, getDocs, arrayUnion } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "../../lib/firebase";
 import { generateInviteCode } from "../../lib/inviteCode";
@@ -21,6 +21,7 @@ import { useAuthGate } from "../../lib/useAuthGate";
 export default function CreateProjectPage() {
   const router = useRouter();
   const [user, setUser] = useState(undefined);
+  const [mode, setMode] = useState("create"); // "create" | "join"
   const [name, setName] = useState("");
   const [brief, setBrief] = useState("");
   const [saving, setSaving] = useState(false);
@@ -29,6 +30,9 @@ export default function CreateProjectPage() {
   const [integrations, setIntegrations] = useState(null);
   const [makeDriveFolder, setMakeDriveFolder] = useState(false);
   const [makeGithubRepo, setMakeGithubRepo] = useState(false);
+  const [joinCode, setJoinCode] = useState("");
+  const [joinBusy, setJoinBusy] = useState(false);
+  const [joinError, setJoinError] = useState("");
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
@@ -76,7 +80,7 @@ export default function CreateProjectPage() {
       });
     } catch (err) {
       console.error(err);
-      setError("Couldn't create the project — try again.");
+      setError("Couldn't create the project. Try again.");
       setSaving(false);
       setStep("");
       return;
@@ -129,16 +133,95 @@ export default function CreateProjectPage() {
     router.push(`/project/${ref.id}`);
   }
 
+  // Same lookup app/join/[code]/page.js does, just reachable by typing the
+  // code directly instead of needing the full invite link.
+  async function handleJoin(e) {
+    e.preventDefault();
+    const code = joinCode.trim().toUpperCase();
+    if (!code || !user) return;
+    setJoinBusy(true);
+    setJoinError("");
+    try {
+      const q = query(collection(db, "projects"), where("inviteCode", "==", code));
+      const snap = await getDocs(q);
+      if (snap.empty) {
+        setJoinError("No project found with that code. Double-check it and try again.");
+        setJoinBusy(false);
+        return;
+      }
+      const p = { id: snap.docs[0].id, ...snap.docs[0].data() };
+      if (!(p.memberIds || []).includes(user.uid)) {
+        await updateDoc(doc(db, "projects", p.id), { memberIds: arrayUnion(user.uid) });
+      }
+      router.push(`/project/${p.id}`);
+    } catch (err) {
+      setJoinError("Couldn't join that project. " + (err.code || err.message || "Try again."));
+      setJoinBusy(false);
+    }
+  }
+
   if (!user) return <div className="shell" />;
 
   return (
     <div className="shell">
       <TopNav user={user} />
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-        <form onSubmit={handleCreate} className="shell-card" style={{ width: "100%", maxWidth: 440 }}>
+        <div className="shell-card" style={{ width: "100%", maxWidth: 440 }}>
+          <div style={{ display: "flex", gap: 4, padding: 3, background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 9, marginBottom: 22 }}>
+            {[
+              { key: "create", label: "Make a project" },
+              { key: "join", label: "Join a project" },
+            ].map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setMode(t.key)}
+                style={{
+                  flex: 1,
+                  padding: "8px 0",
+                  borderRadius: 7,
+                  border: "none",
+                  cursor: "pointer",
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  background: mode === t.key ? "var(--s-amber)" : "transparent",
+                  color: mode === t.key ? "var(--s-amber-ink)" : "var(--s-text-2)",
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {mode === "join" ? (
+            <form onSubmit={handleJoin}>
+              <div style={{ fontWeight: 700, fontSize: 24, marginBottom: 6 }}>Join a project</div>
+              <div style={{ color: "var(--s-text-2)", fontSize: 14, marginBottom: 22 }}>
+                Enter the 8-character code a teammate shared with you.
+              </div>
+
+              {joinError && <p className="notice">{joinError}</p>}
+
+              <input
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value.toUpperCase().slice(0, 8))}
+                placeholder="ABCD1234"
+                autoFocus
+                maxLength={8}
+                className="shell-input"
+                style={{ width: "100%", marginBottom: 16, fontFamily: "'DM Sans', sans-serif", fontWeight: 700, letterSpacing: "0.18em", textAlign: "center", fontSize: 18, textTransform: "uppercase" }}
+              />
+
+              <button type="submit" disabled={joinBusy || joinCode.trim().length < 4} className="shell-auth-btn primary">
+                {joinBusy ? "Joining…" : "Join project"}
+              </button>
+            </form>
+          ) : (
+        <form onSubmit={handleCreate}>
           <div style={{ fontWeight: 700, fontSize: 24, marginBottom: 6 }}>New project</div>
           <div style={{ color: "var(--s-text-2)", fontSize: 14, marginBottom: 22 }}>
-            Give it a name and a quick description — you can flesh out roles and tasks inside.
+            Give it a name and a quick description. You can flesh out roles and tasks inside.
           </div>
 
           {error && <p className="notice">{error}</p>}
@@ -191,6 +274,8 @@ export default function CreateProjectPage() {
             {saving ? step || "Creating…" : "Create project"}
           </button>
         </form>
+          )}
+        </div>
       </div>
     </div>
   );

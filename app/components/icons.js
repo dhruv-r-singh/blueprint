@@ -114,6 +114,70 @@ export function IconChat({ size = 14 }) {
   );
 }
 
+export function IconReply({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="9 17 4 12 9 7" />
+      <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+    </svg>
+  );
+}
+
+export function IconPlay({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M7 4.5v15l13-7.5-13-7.5z" />
+    </svg>
+  );
+}
+
+export function IconPause({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <rect x="6" y="4.5" width="4.5" height="15" rx="1" />
+      <rect x="13.5" y="4.5" width="4.5" height="15" rx="1" />
+    </svg>
+  );
+}
+
+export function IconVolume({ size = 14, muted = false }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 9v6h4l5 5V4L8 9H4z" fill="currentColor" stroke="none" />
+      {!muted && <path d="M17 8.5a5 5 0 0 1 0 7" />}
+      {!muted && <path d="M19.5 6a8.5 8.5 0 0 1 0 12" />}
+      {muted && <path d="M16.5 9.5l5 5M21.5 9.5l-5 5" />}
+    </svg>
+  );
+}
+
+export function IconExpand({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 3H4v4M16 3h4v4M8 21H4v-4M16 21h4v-4" />
+    </svg>
+  );
+}
+
+export function IconTranslate({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 5h9M7.5 3v2m0 0c0 4-2 7-5 9m5-9c1.2 2.3 2.8 4 5 5.3M13 21l4-9 4 9m-6.5-3h5" />
+    </svg>
+  );
+}
+
+export function IconReact({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8.5 13.5s1.5 2 3.5 2 3.5-2 3.5-2" />
+      <line x1="9" y1="9" x2="9.01" y2="9" />
+      <line x1="15" y1="9" x2="15.01" y2="9" />
+    </svg>
+  );
+}
+
 // Brand marks, but rendered monotone (currentColor) instead of full brand
 // color, so they sit quietly among the rest of the sidebar's gray icon set
 // instead of sticking out as the only colored things in the nav.
@@ -125,13 +189,27 @@ export function IconGithubMark({ size = 15 }) {
   );
 }
 
-export function IconDriveMark({ size = 15 }) {
+export function IconLinkedinMark({ size = 15 }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 22" fill="currentColor">
-      <path d="M8.2 1h7.6l7.2 12.5-3.8 6.6H4.8L1 13.5 8.2 1z" opacity="0" />
-      <path d="M8.5 1L1 14l3.4 6h6.9l-7.5-13 4.7-6z" />
-      <path d="M15.4 1H8.6l7.6 13h6.8L15.4 1z" opacity="0.75" />
-      <path d="M11.3 14l-3.4 6h13.7l3.4-6H11.3z" opacity="0.45" />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+    </svg>
+  );
+}
+
+export function IconDriveMark({ size = 15 }) {
+  // A clean rounded-triangle recreation of the current Google Drive mark —
+  // built from scratch as a single-tone silhouette (rounded corners, small
+  // notch cut where the three facets meet at the apex) so it sits quietly
+  // among this sidebar's other monotone icons, matching IconGithubMark's
+  // fill="currentColor" convention rather than the multi-opacity layering
+  // the previous version used.
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path
+        fillRule="evenodd"
+        d="M11.25 4.41 Q12 3 12.75 4.41 L20.25 18.59 Q21 20 19.4 20 L4.6 20 Q3 20 3.75 18.59 Z M11.3 5.1 L12.7 5.1 L12 6.6 Z"
+      />
     </svg>
   );
 }

@@ -7,6 +7,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   doc,
   getDoc,
+  setDoc,
   onSnapshot,
   collection,
   query,
@@ -31,14 +32,17 @@ import {
   inviteGithubCollaborator,
   createCalendarEvent,
   deleteCalendarEvent,
+  listCalendarEvents,
   uploadFileToDrive,
 } from "../../../lib/integrations";
 import { uploadFile, safeFileName, compressImage } from "../../../lib/storage";
 import Autocomplete from "../../components/Autocomplete";
 import TopNav from "../../components/TopNav";
 import CADViewer, { guessCadKind } from "../../components/CADViewer";
+import GuidedTour from "../../components/GuidedTour";
+import VideoPlayer from "../../components/VideoPlayer";
 import Toggle from "../../components/Toggle";
-import { IconGear, IconMic, IconSparkle, IconLayout, IconCheckSquare, IconTarget, IconCalendar, IconChat, IconGithubMark, IconDriveMark } from "../../components/icons";
+import { IconGear, IconMic, IconSparkle, IconLayout, IconCheckSquare, IconTarget, IconCalendar, IconChat, IconGithubMark, IconDriveMark, IconReply, IconReact, IconTranslate } from "../../components/icons";
 import { focusModeInfo } from "../../components/FocusMode";
 import VideoCall from "./VideoCall";
 import { useAuthGate } from "../../../lib/useAuthGate";
@@ -81,6 +85,32 @@ const CHANNELS = [
 ];
 
 const WHITEBOARD_COLORS = ["#1a1a1a", "#e5534b", "#e0a339", "#5fbf8f", "#6fa8d8", "#c46fd8"];
+
+// First-login walkthrough — see components/GuidedTour.js. Each `selector`
+// matches a `data-tour="..."` attribute already on the real element, so
+// there's nothing fake to keep in sync as the UI changes.
+const TOUR_STEPS = [
+  {
+    selector: "switcher",
+    title: "This is your project switcher",
+    body: "Jump between every project you're part of, or start a new one, from right here.",
+  },
+  {
+    selector: "channels",
+    title: "Everything for this project",
+    body: "Overview, Tasks, Matches, Calendar, and Team chat all live in these channels.",
+  },
+  {
+    selector: "settings-btn",
+    title: "Invite your team",
+    body: "Settings has your invite link and 8-character join code, plus project details and roles.",
+  },
+  {
+    selector: "account-menu",
+    title: "Your account",
+    body: "Profile, Preferences (theme, accent color, notifications), and sign out all live up here.",
+  },
+];
 
 const SETTINGS_CHANNEL = { key: "settings", label: "Settings", desc: "Project name, roles, and invites" };
 const DOCS_CHANNEL = { key: "docs", label: "Documentation", desc: "Shared notes for this project" };
@@ -175,8 +205,15 @@ export default function ProjectPage() {
   const currentPointsRef = useRef([]);
   const [viewingCad, setViewingCad] = useState(null); // { url, kind } | null
   const [memberProfiles, setMemberProfiles] = useState({}); // uid -> profile doc data
-  const [translations, setTranslations] = useState({}); // messageId -> { text, loading, error, lang }
+  const [translations, setTranslations] = useState({}); // messageId -> { text, loading, error, lang, sameLanguage }
   const [presenceTick, setPresenceTick] = useState(0); // bumps periodically so online/offline labels stay fresh
+  const [replyingTo, setReplyingTo] = useState(null); // { id, senderName, text } | null
+  const [stagedAttachment, setStagedAttachment] = useState(null); // attachment fields waiting for Send, not yet posted
+  const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const [googleCalEvents, setGoogleCalEvents] = useState([]);
+  const [calSelectedDay, setCalSelectedDay] = useState(null); // "YYYY-MM-DD" | null — filters the list below the grid
+  const [showTour, setShowTour] = useState(false);
+  const tourDecidedRef = useRef(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
@@ -209,6 +246,27 @@ export default function ProjectPage() {
     );
     return () => unsubs.forEach((u) => u());
   }, [project?.memberIds?.join(",")]);
+
+  // Show the guided tour exactly once per account — first time this project
+  // page loads with the viewer's own profile doc in hand and `tourSeen`
+  // isn't set yet. tourDecidedRef guards against re-triggering off of every
+  // later profile snapshot update (e.g. changing your avatar mid-tour).
+  useEffect(() => {
+    if (tourDecidedRef.current || !user?.uid) return;
+    const mine = memberProfiles[user.uid];
+    if (!mine) return; // still loading
+    tourDecidedRef.current = true;
+    if (!mine.tourSeen) setShowTour(true);
+  }, [memberProfiles, user?.uid]);
+
+  function finishTour() {
+    setShowTour(false);
+    if (user?.uid) {
+      setDoc(doc(db, "profiles", user.uid), { tourSeen: true }, { merge: true }).catch((err) =>
+        console.error("Couldn't save tour progress:", err)
+      );
+    }
+  }
 
   // Presence is time-threshold based (see lib/presence.js), so without
   // this tick a member's dot would stay "online" forever after their last
@@ -336,6 +394,38 @@ export default function ProjectPage() {
     return () => unsub();
   }, [tab, id]);
 
+  // Pulls the caller's own Google Calendar events for the visible month so
+  // the grid reflects real Calendar data (meetings booked outside Blueprint
+  // too), not just events this app itself created — merged with `events`
+  // (the in-app/Firestore copy) at render time, de-duplicated by
+  // googleEventId so an app-created event doesn't show up twice.
+  useEffect(() => {
+    if (tab !== "calendar" || !myIntegrations?.driveAccessToken) {
+      setGoogleCalEvents([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await ensureFreshGoogleToken(myIntegrations);
+        const rangeStart = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1);
+        const rangeEnd = new Date(calMonth.getFullYear(), calMonth.getMonth() + 2, 0);
+        const items = await listCalendarEvents(token, {
+          timeMinISO: rangeStart.toISOString(),
+          timeMaxISO: rangeEnd.toISOString(),
+        });
+        if (!cancelled) setGoogleCalEvents(items);
+      } catch (err) {
+        console.error("Couldn't load Google Calendar events:", err);
+        if (!cancelled) setGoogleCalEvents([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, calMonth.getFullYear(), calMonth.getMonth(), myIntegrations?.driveAccessToken]);
+
   useEffect(() => {
     if (tab !== "activities" || !id) return;
     const q = query(collection(db, "projects", id, "whiteboard"), orderBy("createdAt"));
@@ -443,8 +533,8 @@ export default function ProjectPage() {
       console.error("Failed to undo stroke:", err);
       setBoardError(
         err.code === "permission-denied"
-          ? "Couldn't undo — you don't have permission to edit this board (check Firestore rules)."
-          : "Couldn't undo that stroke — try again."
+          ? "Couldn't undo. You don't have permission to edit this board (check Firestore rules)."
+          : "Couldn't undo that stroke. Try again."
       );
     }
   }
@@ -464,8 +554,8 @@ export default function ProjectPage() {
       console.error("Failed to clear whiteboard:", err);
       setBoardError(
         err.code === "permission-denied"
-          ? "Couldn't clear the board — you don't have permission to edit this board (check Firestore rules)."
-          : "Couldn't clear the board — try again."
+          ? "Couldn't clear the board. You don't have permission to edit this board (check Firestore rules)."
+          : "Couldn't clear the board. Try again."
       );
     } finally {
       setBoardBusy(false);
@@ -589,7 +679,10 @@ export default function ProjectPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Couldn't translate that message.");
-      setTranslations((prev) => ({ ...prev, [m.id]: { text: data.translatedText, loading: false, error: "", lang: target } }));
+      setTranslations((prev) => ({
+        ...prev,
+        [m.id]: { text: data.translatedText, loading: false, error: "", lang: target, sameLanguage: Boolean(data.sameLanguage) },
+      }));
     } catch (err) {
       setTranslations((prev) => ({ ...prev, [m.id]: { loading: false, error: err.message || "Couldn't translate that message." } }));
     }
@@ -605,16 +698,33 @@ export default function ProjectPage() {
 
   async function sendMessage(e) {
     e.preventDefault();
-    if (!msgText.trim() || !user) return;
     const text = msgText.trim();
+    if ((!text && !stagedAttachment) || !user) return;
     setMsgText("");
     setMentionOpen(false);
+    const replyTo = replyingTo ? { id: replyingTo.id, senderName: replyingTo.senderName, text: replyingTo.text } : null;
+    setReplyingTo(null);
+    const attachment = stagedAttachment;
+    setStagedAttachment(null);
     await addDoc(collection(db, "projects", id, "messages"), {
-      text,
+      // A staged attachment becomes the message's actual type/payload; any
+      // text typed alongside it rides along as `caption` rather than
+      // replacing the normal `text` field a plain message uses.
+      ...(attachment || { type: "text" }),
+      ...(text ? (attachment ? { caption: text } : { text }) : {}),
       mentions: extractMentions(text),
+      replyTo,
       senderId: user.uid,
       senderName: user.displayName || user.email || "Unknown",
       createdAt: serverTimestamp(),
+    });
+  }
+
+  function startReply(m) {
+    setReplyingTo({
+      id: m.id,
+      senderName: m.senderName,
+      text: m.type === "voice" ? "Voice message" : m.type === "attachment" ? m.title || "Attachment" : m.text || "",
     });
   }
 
@@ -671,7 +781,7 @@ export default function ProjectPage() {
         setRecordSeconds(recordSecondsRef.current);
       }, 1000);
     } catch (err) {
-      setRecordError("Couldn't access your microphone — check browser permissions.");
+      setRecordError("Couldn't access your microphone. Check browser permissions.");
     }
   }
 
@@ -728,17 +838,8 @@ export default function ProjectPage() {
     }
   }
 
-  async function sendPickedAttachment(item) {
-    if (!user) return;
-    await addDoc(collection(db, "projects", id, "messages"), {
-      type: "attachment",
-      url: item.url,
-      provider: item.provider,
-      title: item.title,
-      senderId: user.uid,
-      senderName: user.displayName || user.email || "Unknown",
-      createdAt: serverTimestamp(),
-    });
+  function sendPickedAttachment(item) {
+    setStagedAttachment({ type: "attachment", url: item.url, provider: item.provider, title: item.title });
     closeComposerExtra();
   }
 
@@ -758,20 +859,12 @@ export default function ProjectPage() {
     }
   }
 
-  async function sendAttachment(e) {
+  function sendAttachment(e) {
     e.preventDefault();
-    if (!attachUrl.trim() || !user) return;
+    if (!attachUrl.trim()) return;
     const url = attachUrl.trim();
     const { provider, title } = guessLinkMeta(url);
-    await addDoc(collection(db, "projects", id, "messages"), {
-      type: "attachment",
-      url,
-      provider,
-      title,
-      senderId: user.uid,
-      senderName: user.displayName || user.email || "Unknown",
-      createdAt: serverTimestamp(),
-    });
+    setStagedAttachment({ type: "attachment", url, provider, title });
     closeComposerExtra();
   }
 
@@ -801,7 +894,7 @@ export default function ProjectPage() {
         }
       }
 
-      await addDoc(collection(db, "projects", id, "messages"), {
+      setStagedAttachment({
         type: "attachment",
         url,
         provider: "upload",
@@ -809,9 +902,6 @@ export default function ProjectPage() {
         fileSize: toUpload.size,
         fileType: toUpload.type || file.type || "",
         driveUrl,
-        senderId: user.uid,
-        senderName: user.displayName || user.email || "Unknown",
-        createdAt: serverTimestamp(),
       });
       closeComposerExtra();
     } catch (err) {
@@ -1063,7 +1153,7 @@ export default function ProjectPage() {
         // Non-fatal — the event still shows up in-app for every member even
         // if the creator's Google Calendar connection isn't set up.
         console.error("Couldn't create the Google Calendar event:", err);
-        setEventError(err.message || "Saved to the project, but couldn't add it to Google Calendar — connect Google in Preferences and try again.");
+        setEventError(err.message || "Saved to the project, but couldn't add it to Google Calendar. Connect Google in Preferences and try again.");
       }
 
       await addDoc(collection(db, "projects", id, "events"), {
@@ -1146,7 +1236,7 @@ export default function ProjectPage() {
    */
   async function deleteProject() {
     if (!user || !project || user.uid !== project.ownerId) return;
-    if (!window.confirm(`Permanently delete "${project.name}"? This deletes every task, message, and file reference in it — there's no undo.`)) return;
+    if (!window.confirm(`Permanently delete "${project.name}"? This deletes every task, message, and file reference in it. There's no undo.`)) return;
     setDeletingProject(true);
     try {
       const subcollections = ["tasks", "messages", "events", "whiteboard", "retro"];
@@ -1170,7 +1260,7 @@ export default function ProjectPage() {
         <TopNav user={user} />
         <div className="shell-view">
           <p className="notice">
-            Couldn&rsquo;t find that project — it may have been deleted, or you may not have access to it.{" "}
+            Couldn&rsquo;t find that project. It may have been deleted, or you may not have access to it.{" "}
             <Link href="/" style={{ color: "var(--s-amber)" }}>Go home</Link>
           </p>
         </div>
@@ -1186,7 +1276,7 @@ export default function ProjectPage() {
 
       <div className="shell-body">
         <div className="shell-sidebar">
-          <div className="shell-switcher" onClick={() => setDropdownOpen((v) => !v)}>
+          <div className="shell-switcher" data-tour="switcher" onClick={() => setDropdownOpen((v) => !v)}>
             {project?.imageUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={project.imageUrl} alt="" className="shell-swatch" style={{ objectFit: "cover" }} />
@@ -1226,7 +1316,7 @@ export default function ProjectPage() {
             )}
           </div>
 
-          <div className="shell-chan-group">
+          <div className="shell-chan-group" data-tour="channels">
             <div className="shell-chan-group-label">{project?.name}</div>
             {CHANNELS.map((c) => (
               <button
@@ -1291,6 +1381,7 @@ export default function ProjectPage() {
             </button>
             <button
               className={"shell-chan" + (tab === "settings" ? " active" : "")}
+              data-tour="settings-btn"
               onClick={() => setTab("settings")}
             >
               <IconGear /> Settings
@@ -1594,7 +1685,7 @@ export default function ProjectPage() {
                         ))}
                       {tasks.filter((t) => t.status === col.key).length === 0 && (
                         <div style={{ fontSize: 12, color: "var(--s-text-3)", padding: "10px 2px" }}>
-                          {col.key === "todo" ? "Nothing here yet — add a task above." : "Drag a task here."}
+                          {col.key === "todo" ? "Nothing here yet. Add a task above." : "Drag a task here."}
                         </div>
                       )}
                     </div>
@@ -1650,8 +1741,89 @@ export default function ProjectPage() {
             </div>
           )}
 
-          {tab === "calendar" && (
+          {tab === "calendar" && (() => {
+            function localKey(d) {
+              return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+            }
+            function googleEventDate(g) {
+              const raw = g.start?.dateTime || g.start?.date;
+              if (!raw) return null;
+              return new Date(raw.includes("T") ? raw : raw + "T00:00:00");
+            }
+            const usedGoogleIds = new Set(events.map((e) => e.googleEventId).filter(Boolean));
+            const byDay = {};
+            for (const evt of events) {
+              if (!evt.start) continue;
+              const key = localKey(new Date(evt.start));
+              (byDay[key] ||= []).push({ id: evt.id, title: evt.title, url: evt.googleEventUrl || null, google: Boolean(evt.googleEventId) });
+            }
+            for (const g of googleCalEvents) {
+              if (usedGoogleIds.has(g.id)) continue; // already represented via the app-created copy above
+              const d = googleEventDate(g);
+              if (!d) continue;
+              const key = localKey(d);
+              (byDay[key] ||= []).push({ id: g.id, title: g.summary || "(untitled)", url: g.htmlLink, google: true });
+            }
+
+            const startWeekday = calMonth.getDay();
+            const gridStart = new Date(calMonth.getFullYear(), calMonth.getMonth(), 1 - startWeekday);
+            const todayKey = localKey(new Date());
+            const cells = Array.from({ length: 42 }, (_, i) => {
+              const d = new Date(gridStart);
+              d.setDate(gridStart.getDate() + i);
+              return d;
+            });
+
+            const filteredEvents = calSelectedDay
+              ? events.filter((evt) => evt.start && localKey(new Date(evt.start)) === calSelectedDay)
+              : events;
+
+            return (
             <div className="shell-view">
+              <div className="shell-cal-head">
+                <button type="button" className="shell-cal-nav-btn" onClick={() => setCalMonth(new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1))} aria-label="Previous month">
+                  ‹
+                </button>
+                <span className="shell-cal-month-label">{calMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</span>
+                <button type="button" className="shell-cal-nav-btn" onClick={() => setCalMonth(new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1))} aria-label="Next month">
+                  ›
+                </button>
+                {!myIntegrations?.driveAccessToken && (
+                  <span style={{ fontSize: 11, color: "var(--s-text-3)", marginLeft: "auto" }}>
+                    Connect Google in <Link href="/account" style={{ color: "var(--s-amber)" }}>Preferences</Link> to see your synced Calendar events here too.
+                  </span>
+                )}
+              </div>
+
+              <div className="shell-cal-grid">
+                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+                  <div key={d} className="shell-cal-dow">{d}</div>
+                ))}
+                {cells.map((d, i) => {
+                  const key = localKey(d);
+                  const dayEvents = byDay[key] || [];
+                  const outside = d.getMonth() !== calMonth.getMonth();
+                  return (
+                    <div
+                      key={i}
+                      className={"shell-cal-cell" + (outside ? " outside" : "") + (key === todayKey ? " today" : "")}
+                      onClick={() => setCalSelectedDay(calSelectedDay === key ? null : key)}
+                      style={{ cursor: dayEvents.length ? "pointer" : "default" }}
+                    >
+                      <span className="shell-cal-day-num">{d.getDate()}</span>
+                      {dayEvents.slice(0, 3).map((ev) => (
+                        <span key={ev.id} className={"shell-cal-event-chip" + (ev.google ? " google" : "")} title={ev.title}>
+                          {ev.title}
+                        </span>
+                      ))}
+                      {dayEvents.length > 3 && (
+                        <span style={{ fontSize: 10, color: "var(--s-text-3)" }}>+{dayEvents.length - 3} more</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
               <form onSubmit={createEvent} className="shell-card" style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
                 <p style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13 }}>New event</p>
                 <input
@@ -1697,15 +1869,23 @@ export default function ProjectPage() {
                 <button type="submit" disabled={eventBusy} className="shell-task-add-btn" style={{ alignSelf: "flex-start", padding: "9px 18px" }}>
                   {eventBusy ? "Creating…" : "Add event"}
                 </button>
-                {!myIntegrations?.driveAccessToken && (
-                  <div style={{ fontSize: 11, color: "var(--s-text-3)" }}>
-                    Connect Google in <Link href="/account" style={{ color: "var(--s-amber)" }}>Preferences</Link> to send real Google Calendar invites — events still show up here either way.
-                  </div>
-                )}
               </form>
 
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", margin: 0 }}>
+                  {calSelectedDay
+                    ? new Date(calSelectedDay + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })
+                    : "All events"}
+                </p>
+                {calSelectedDay && (
+                  <button type="button" className="ghost" style={{ fontSize: 11.5 }} onClick={() => setCalSelectedDay(null)}>
+                    Show all
+                  </button>
+                )}
+              </div>
+
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {events.map((evt) => {
+                {filteredEvents.map((evt) => {
                   const start = evt.start ? new Date(evt.start) : null;
                   const end = evt.end ? new Date(evt.end) : null;
                   const dateLabel = start
@@ -1713,7 +1893,7 @@ export default function ProjectPage() {
                     : "";
                   const timeLabel =
                     start && end
-                      ? `${start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} – ${end.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
+                      ? `${start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} to ${end.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
                       : "";
                   return (
                     <div key={evt.id} className="shell-card" style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
@@ -1744,12 +1924,15 @@ export default function ProjectPage() {
                     </div>
                   );
                 })}
-                {events.length === 0 && (
-                  <p style={{ fontSize: 13, color: "var(--s-text-3)" }}>No events yet — add one above.</p>
+                {filteredEvents.length === 0 && (
+                  <p style={{ fontSize: 13, color: "var(--s-text-3)" }}>
+                    {calSelectedDay ? "No events on this day." : "No events yet. Add one above."}
+                  </p>
                 )}
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {tab === "activities" && (
             <div className="shell-view">
@@ -1868,10 +2051,43 @@ export default function ProjectPage() {
                 joinMicMuted={Boolean(memberProfiles[user?.uid]?.preferences?.micOffOnJoin)}
                 joinCamOff={Boolean(memberProfiles[user?.uid]?.preferences?.camOffOnJoin)}
               />
-              <div className="shell-chat-panel">
+              <div style={{ display: "flex", flex: 1, minHeight: 0, gap: 16 }}>
+              <div className="shell-chat-panel" style={{ flex: 1, minWidth: 0 }}>
                 <div className="shell-msgs">
-                  {messages.map((m) => (
+                  {messages.map((m) => {
+                    const isTextMsg = !m.type || m.type === "text";
+                    const canTranslate = isTextMsg && m.text && !translations[m.id]?.sameLanguage;
+                    return (
                     <div key={m.id} className={"shell-msg" + (m.mentions?.includes(user?.uid) ? " mentioned" : "")}>
+                      <div className="shell-msg-actions">
+                        <button type="button" className="shell-msg-action-btn" title="Reply" onClick={() => startReply(m)}>
+                          <IconReply size={13} />
+                        </button>
+                        {canTranslate && (
+                          <button type="button" className="shell-msg-action-btn" title="Translate" onClick={() => translateMessage(m)}>
+                            <IconTranslate size={13} />
+                          </button>
+                        )}
+                        <span style={{ position: "relative" }}>
+                          <button
+                            type="button"
+                            className="shell-msg-action-btn"
+                            title="React"
+                            onClick={() => setOpenReactionPicker(openReactionPicker === m.id ? null : m.id)}
+                          >
+                            <IconReact size={13} />
+                          </button>
+                          {openReactionPicker === m.id && (
+                            <div className="shell-reaction-picker" style={{ position: "absolute", top: "calc(100% + 6px)", bottom: "auto", left: "auto", right: 0 }}>
+                              {REACTION_EMOJI.map((emoji) => (
+                                <button key={emoji} type="button" onClick={() => toggleReaction(m, emoji)}>
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </span>
+                      </div>
                       <span className="shell-presence-wrap" style={{ marginTop: 2 }}>
                         {memberProfiles[m.senderId]?.avatarUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
@@ -1886,27 +2102,29 @@ export default function ProjectPage() {
                         })()}
                       </span>
                       <div className="shell-msg-body" style={{ flex: 1 }}>
+                        {m.replyTo && (
+                          <div className="shell-msg-reply-quote">
+                            <IconReply size={11} />
+                            <b>{m.replyTo.senderName}</b>: {m.replyTo.text.length > 80 ? m.replyTo.text.slice(0, 80) + "…" : m.replyTo.text}
+                          </div>
+                        )}
                         <b>{m.senderName}</b>
 
-                        {(!m.type || m.type === "text") && (
+                        {isTextMsg && (
                           <>
                             <p>{renderMessageText(m.text)}</p>
-                            {!translations[m.id] && (
-                              <button
-                                type="button"
-                                onClick={() => translateMessage(m)}
-                                style={{ background: "none", border: "none", padding: 0, marginTop: 2, fontSize: 11, color: "var(--s-text-3)", cursor: "pointer" }}
-                              >
-                                Translate
-                              </button>
-                            )}
                             {translations[m.id]?.loading && (
                               <div style={{ fontSize: 11, color: "var(--s-text-3)", marginTop: 2 }}>Translating…</div>
                             )}
                             {translations[m.id]?.error && (
                               <div style={{ fontSize: 11, color: "#e5534b", marginTop: 2 }}>{translations[m.id].error}</div>
                             )}
-                            {translations[m.id]?.text && (
+                            {translations[m.id]?.sameLanguage && (
+                              <div style={{ fontSize: 11, color: "var(--s-text-3)", marginTop: 2, fontStyle: "italic" }}>
+                                Already in your language.
+                              </div>
+                            )}
+                            {translations[m.id]?.text && !translations[m.id]?.sameLanguage && (
                               <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid var(--s-border)" }}>
                                 <p style={{ fontStyle: "italic" }}>{translations[m.id].text}</p>
                                 <button
@@ -1921,6 +2139,8 @@ export default function ProjectPage() {
                           </>
                         )}
 
+                        {m.caption && <p style={{ marginTop: 4 }}>{renderMessageText(m.caption)}</p>}
+
                         {m.type === "attachment" && (
                           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                             {m.provider === "upload" && m.fileType?.startsWith("image/") && (
@@ -1929,7 +2149,7 @@ export default function ProjectPage() {
                               </a>
                             )}
                             {m.provider === "upload" && m.fileType?.startsWith("video/") && (
-                              <video src={m.url} controls style={{ maxWidth: 360, maxHeight: 260, borderRadius: 10, border: "1px solid var(--s-border)" }} />
+                              <VideoPlayer src={m.url} style={{ width: 320, maxWidth: 360 }} />
                             )}
                             {m.provider === "upload" && m.fileType?.startsWith("audio/") && (
                               <audio src={m.url} controls style={{ maxWidth: 320 }} />
@@ -2024,43 +2244,28 @@ export default function ProjectPage() {
                           </button>
                         )}
 
-                        <div className="shell-reactions-row">
-                          {Object.entries(m.reactions || {})
-                            .filter(([, uids]) => (uids || []).length > 0)
-                            .map(([emoji, uids]) => (
-                              <button
-                                key={emoji}
-                                type="button"
-                                className={"shell-reaction-chip" + (uids.includes(user?.uid) ? " mine" : "")}
-                                onClick={() => toggleReaction(m, emoji)}
-                              >
-                                {emoji} {uids.length}
-                              </button>
-                            ))}
-                          <span style={{ position: "relative" }}>
-                            <button
-                              type="button"
-                              className="shell-reaction-add"
-                              onClick={() => setOpenReactionPicker(openReactionPicker === m.id ? null : m.id)}
-                            >
-                              +
-                            </button>
-                            {openReactionPicker === m.id && (
-                              <div className="shell-reaction-picker">
-                                {REACTION_EMOJI.map((emoji) => (
-                                  <button key={emoji} type="button" onClick={() => toggleReaction(m, emoji)}>
-                                    {emoji}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </span>
-                        </div>
+                        {Object.entries(m.reactions || {}).some(([, uids]) => (uids || []).length > 0) && (
+                          <div className="shell-reactions-row">
+                            {Object.entries(m.reactions || {})
+                              .filter(([, uids]) => (uids || []).length > 0)
+                              .map(([emoji, uids]) => (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  className={"shell-reaction-chip" + (uids.includes(user?.uid) ? " mine" : "")}
+                                  onClick={() => toggleReaction(m, emoji)}
+                                >
+                                  {emoji} {uids.length}
+                                </button>
+                              ))}
+                          </div>
+                        )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   {messages.length === 0 && (
-                    <p style={{ fontSize: 12, color: "var(--s-text-3)" }}>No messages yet — say hi.</p>
+                    <p style={{ fontSize: 12, color: "var(--s-text-3)" }}>No messages yet, say hi.</p>
                   )}
                 </div>
 
@@ -2218,6 +2423,27 @@ export default function ProjectPage() {
                   </div>
                 )}
 
+                {composerMode === null && !recording && replyingTo && (
+                  <div className="shell-reply-preview">
+                    Replying to <b>{replyingTo.senderName}</b>: {replyingTo.text.length > 60 ? replyingTo.text.slice(0, 60) + "…" : replyingTo.text}
+                    <button type="button" className="shell-reply-preview-close" onClick={() => setReplyingTo(null)} aria-label="Cancel reply">
+                      ×
+                    </button>
+                  </div>
+                )}
+
+                {composerMode === null && !recording && stagedAttachment && (
+                  <div className="shell-staged-attachment">
+                    <span className={"shell-attachment-badge " + stagedAttachment.provider}>
+                      {stagedAttachment.provider === "drive" ? "Drive" : stagedAttachment.provider === "github" ? "GitHub" : stagedAttachment.provider === "upload" ? "File" : "Link"}
+                    </span>
+                    <span className="shell-attachment-title" style={{ fontSize: 13 }}>{stagedAttachment.title}</span>
+                    <button type="button" className="shell-staged-attachment-remove" onClick={() => setStagedAttachment(null)} aria-label="Remove attachment">
+                      ×
+                    </button>
+                  </div>
+                )}
+
                 {composerMode === null && !recording && (
                   <form onSubmit={sendMessage} className="shell-composer">
                     <div style={{ position: "relative" }}>
@@ -2269,7 +2495,7 @@ export default function ProjectPage() {
                         value={msgText}
                         onChange={handleMsgTextChange}
                         onKeyDown={(e) => e.key === "Escape" && setMentionOpen(false)}
-                        placeholder="Message the team — @ to mention someone"
+                        placeholder={stagedAttachment ? "Add a caption (optional)" : "Message the team, @ to mention someone"}
                         style={{ width: "100%" }}
                       />
                     </div>
@@ -2288,6 +2514,45 @@ export default function ProjectPage() {
                 )}
                 {recordError && <div style={{ fontSize: 11.5, color: "#e5534b", padding: "0 14px 10px" }}>{recordError}</div>}
               </div>
+
+              <div style={{ width: 180, flex: "none", overflowY: "auto", paddingTop: 4 }}>
+                <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+                  Team ({(project?.memberIds || []).length})
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {(project?.memberIds || [])
+                    .slice()
+                    .sort((a, b) => {
+                      void presenceTick;
+                      const aOn = isOnline(memberProfiles[a]?.lastActiveAt) ? 0 : 1;
+                      const bOn = isOnline(memberProfiles[b]?.lastActiveAt) ? 0 : 1;
+                      return aOn - bOn;
+                    })
+                    .map((uid) => {
+                      void presenceTick;
+                      const profile = memberProfiles[uid] || {};
+                      const online = isOnline(profile.lastActiveAt);
+                      const name = profile.name || (uid === user?.uid ? user?.displayName || user?.email : "Member");
+                      return (
+                        <div key={uid} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span className="shell-presence-wrap">
+                            {profile.avatarUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={profile.avatarUrl} alt="" className="shell-avatar" style={{ width: 24, height: 24 }} />
+                            ) : (
+                              <span className="shell-avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{(name || "?")[0]?.toUpperCase()}</span>
+                            )}
+                            <span className={"shell-presence-dot" + (online ? " online" : "")} />
+                          </span>
+                          <span style={{ fontSize: 12.5, color: online ? "var(--s-text)" : "var(--s-text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {name}
+                          </span>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+              </div>
             </div>
           )}
 
@@ -2301,7 +2566,7 @@ export default function ProjectPage() {
                 if (files.length === 0) {
                   return (
                     <p style={{ fontSize: 13, color: "var(--s-text-3)" }}>
-                      Nothing shared yet — files and links attached in Team chat show up here automatically.
+                      Nothing shared yet. Files and links attached in Team chat show up here automatically.
                     </p>
                   );
                 }
@@ -2378,7 +2643,7 @@ export default function ProjectPage() {
                 </div>
               </div>
               <p style={{ fontSize: 12, color: "var(--s-text-3)", marginBottom: 12 }}>
-                Anything worth keeping handy — setup steps, decisions, links, glossary. Visible to every member, editable by every member.
+                Anything worth keeping handy: setup steps, decisions, links, glossary. Visible to every member, editable by every member.
               </p>
               <textarea
                 value={docsDraft}
@@ -2431,9 +2696,6 @@ export default function ProjectPage() {
                       style={{ display: "none" }}
                     />
                   </label>
-                  <div style={{ fontSize: 11, color: "var(--s-text-3)", marginTop: 6 }}>
-                    From your device.
-                  </div>
                   {imageError && <div style={{ fontSize: 11, color: "#e5534b", marginTop: 4 }}>{imageError}</div>}
                 </div>
               </div>
@@ -2467,7 +2729,7 @@ export default function ProjectPage() {
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 32 }}>
                 {(project.roles || []).length === 0 && (
-                  <p style={{ fontSize: 13, color: "var(--s-text-3)" }}>No roles yet — add them from the Overview tab.</p>
+                  <p style={{ fontSize: 13, color: "var(--s-text-3)" }}>No roles yet. Add them from the Overview tab.</p>
                 )}
                 {(project.roles || []).map((r, i) => (
                   <div
@@ -2515,7 +2777,7 @@ export default function ProjectPage() {
                     </button>
                   </div>
                   <div style={{ fontSize: 12, color: "var(--s-text-3)", marginBottom: 10 }}>
-                    Or share the code: <span style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, color: "var(--s-text)", letterSpacing: "0.08em" }}>{project.inviteCode || "—"}</span>
+                    Or share the code: <span style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, color: "var(--s-text)", letterSpacing: "0.08em" }}>{project.inviteCode || "None yet"}</span>
                   </div>
                   <button
                     onClick={regenerateInvite}
@@ -2559,6 +2821,8 @@ export default function ProjectPage() {
       {viewingCad && (
         <CADViewer url={viewingCad.url} kind={viewingCad.kind} onClose={() => setViewingCad(null)} />
       )}
+
+      {showTour && <GuidedTour steps={TOUR_STEPS} onDone={finishTour} />}
     </div>
   );
 }

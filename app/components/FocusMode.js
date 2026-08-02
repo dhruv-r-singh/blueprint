@@ -21,8 +21,15 @@ export function focusModeInfo(key) {
   return FOCUS_MODES.find((m) => m.key === key) || null;
 }
 
-export default function FocusMode({ user }) {
-  const [open, setOpen] = useState(false);
+// `open`/`onOpenChange` are optional — pass them (as TopNav does) so this
+// dropdown and the hamburger nav menu can share one "which menu is open"
+// switch and never both be open at once. Falls back to fully-internal state
+// if a caller doesn't need that coordination.
+export default function FocusMode({ user, open: openProp, onOpenChange }) {
+  const [openState, setOpenState] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openState;
+  const setOpen = controlled ? onOpenChange : setOpenState;
   const [mode, setMode] = useState("available");
   const ref = useRef(null);
 
@@ -57,7 +64,7 @@ export default function FocusMode({ user }) {
     <div style={{ position: "relative" }} ref={ref}>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(!open)}
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -76,9 +83,12 @@ export default function FocusMode({ user }) {
         {current.label}
       </button>
       {open && (
-        <div className="shell-composer-menu" style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, left: "auto", width: 170, minWidth: 0 }}>
+        <div
+          className="shell-composer-menu"
+          style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, left: "auto", width: "max-content", minWidth: 170 }}
+        >
           {FOCUS_MODES.map((m) => (
-            <div key={m.key} className="shell-proj-row" onClick={() => pick(m.key)} style={{ padding: "8px 10px" }}>
+            <div key={m.key} className="shell-proj-row" onClick={() => pick(m.key)} style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: m.color, flex: "none" }} />
               {m.label}
             </div>
