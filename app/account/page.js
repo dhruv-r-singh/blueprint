@@ -20,7 +20,7 @@ import { describeAuthError } from "../../lib/authErrors";
 import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePublicIdentity } from "../../lib/integrations";
 import { useAuthGate } from "../../lib/useAuthGate";
 import { qrCodeUrl } from "../../lib/inviteCode";
-import { IconPhone, IconLock } from "../../components/icons";
+import { IconPhone, IconLock } from "../components/icons";
 import {
   enrolledFactors,
   startPhoneEnrollment,
