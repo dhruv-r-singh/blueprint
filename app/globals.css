@@ -1,0 +1,613 @@
+@font-face {
+  font-family: "DM Sans";
+  src: url("/fonts/DMSans-Variable.woff2") format("woff2-variations");
+  font-weight: 100 1000;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Raleway";
+  src: url("/fonts/Raleway-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --navy: #0b2340;
+  --navy-2: #0f2e52;
+  --line: #3f6d95;
+  --line-bright: #6fa8d8;
+  --ink: #eaf2fa;
+  --ink-dim: #8ba9c4;
+  --amber: #e0a339;
+  --amber-ink: #241703;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--navy);
+  color: var(--ink);
+  font-family: "DM Sans", sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 3px;
+}
+
+.notice {
+  font-family: "DM Sans", sans-serif;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--amber);
+  border: 1px dashed var(--amber);
+  padding: 12px 14px;
+  margin-bottom: 28px;
+  letter-spacing: 0.02em;
+}
+
+.chip {
+  font-family: "DM Sans", sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--amber);
+  border: 1px solid var(--line);
+  padding: 3px 8px;
+  display: inline-block;
+}
+
+/* the ONLY place Raleway is used */
+.brand-wordmark {
+  font-family: "Raleway", sans-serif;
+  font-weight: 700;
+}
+
+/* ================= APP SHELL (matches the design mockup) ================= */
+
+.shell {
+  --s-bg-side: #1f2024;
+  --s-bg-main: #26272c;
+  --s-bg-elevated: #2f3036;
+  --s-bg-hover: #2a2b30;
+  --s-border: #35363c;
+  --s-text: #e7e8ea;
+  --s-text-2: #9a9ba1;
+  --s-text-3: #6f7078;
+  --s-amber: #e0a339;
+  --s-amber-ink: #241703;
+  --s-green: #5fbf8f;
+
+  background: var(--s-bg-main);
+  color: var(--s-text);
+  font-family: "DM Sans", sans-serif;
+  font-size: 15px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.shell-topbar {
+  height: 60px;
+  flex: none;
+  background: var(--s-bg-side);
+  border-bottom: 1px solid var(--s-border);
+  display: flex;
+  align-items: center;
+  padding: 0 22px;
+}
+.shell-topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px 6px 6px;
+  border-radius: 24px;
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+}
+.shell-topbar-right:hover {
+  background: var(--s-bg-hover);
+}
+.shell-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--s-bg-elevated);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "DM Sans", sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  flex: none;
+}
+.shell-pname {
+  font-size: 14px;
+  color: var(--s-text-2);
+}
+
+.shell-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.shell-sidebar {
+  width: 268px;
+  background: var(--s-bg-side);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--s-border);
+}
+.shell-switcher {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--s-border);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  cursor: pointer;
+  position: relative;
+}
+.shell-switcher:hover {
+  background: var(--s-bg-hover);
+}
+.shell-swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--s-amber);
+  color: var(--s-amber-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "DM Sans", sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  flex: none;
+}
+.shell-switcher-name {
+  font-family: "DM Sans", sans-serif;
+  font-weight: 700;
+  font-size: 16px;
+}
+.shell-chev {
+  margin-left: auto;
+  color: var(--s-text-3);
+  font-size: 13px;
+}
+.shell-dropdown {
+  position: absolute;
+  top: 66px;
+  left: 10px;
+  width: 230px;
+  background: var(--s-bg-elevated);
+  border: 1px solid var(--s-border);
+  border-radius: 12px;
+  padding: 10px;
+  z-index: 10;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.shell-dropdown-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--s-text-3);
+  padding: 6px 8px 6px;
+  font-weight: 600;
+}
+.shell-proj-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--s-text-2);
+  text-decoration: none;
+}
+.shell-proj-row:hover {
+  background: var(--s-bg-hover);
+  color: var(--s-text);
+}
+.shell-mini-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: none;
+  background: var(--s-amber);
+}
+
+.shell-chan-group {
+  padding: 18px 10px;
+}
+.shell-chan-group-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--s-text-3);
+  padding: 0 10px 8px;
+  font-weight: 700;
+}
+.shell-chan {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 10px 11px 18px;
+  border-radius: 8px;
+  color: var(--s-text-2);
+  cursor: pointer;
+  font-size: 14.5px;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+}
+.shell-chan:hover {
+  background: var(--s-bg-hover);
+  color: var(--s-text);
+}
+.shell-chan.active {
+  background: var(--s-bg-elevated);
+  color: var(--s-text);
+}
+.shell-chan.active::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  background: var(--s-amber);
+  border-radius: 2px;
+}
+.shell-fill-pill {
+  margin-left: auto;
+  font-family: "DM Sans", sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--s-amber);
+  background: rgba(224, 163, 57, 0.12);
+  padding: 2px 8px;
+  border-radius: 9px;
+}
+
+.shell-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.shell-main-top {
+  padding: 18px 26px;
+  border-bottom: 1px solid var(--s-border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.shell-page-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--s-amber);
+  color: var(--s-amber-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex: none;
+}
+.shell-cname {
+  font-weight: 700;
+  font-size: 17px;
+}
+.shell-cdesc {
+  color: var(--s-text-3);
+  font-size: 13px;
+}
+.shell-view {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px;
+}
+
+/* overview */
+.shell-brief-text {
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--s-text-2);
+}
+.shell-role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+}
+.shell-role-card {
+  border: 1px solid var(--s-border);
+  background: var(--s-bg-side);
+  border-radius: 12px;
+  padding: 16px;
+}
+.shell-role-code {
+  font-family: "DM Sans", sans-serif;
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--s-amber);
+  margin-bottom: 6px;
+}
+.shell-role-title {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 5px;
+}
+.shell-role-desc {
+  font-size: 13px;
+  color: var(--s-text-3);
+  line-height: 1.45;
+}
+
+/* kanban */
+.shell-board {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.shell-board-col {
+  flex: 1;
+  min-width: 250px;
+  display: flex;
+  flex-direction: column;
+}
+.shell-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--s-text-3);
+  margin-bottom: 12px;
+  font-weight: 700;
+}
+.shell-col-count {
+  background: var(--s-bg-elevated);
+  color: var(--s-text-3);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.shell-col-drop {
+  flex: 1;
+  min-height: 48px;
+  border-radius: 10px;
+  padding: 2px;
+}
+.shell-task-card {
+  border: 1px solid var(--s-border);
+  border-left: 4px solid var(--role-color, var(--s-amber));
+  background: var(--s-bg-side);
+  border-radius: 10px;
+  padding: 12px 12px 12px 14px;
+  margin-bottom: 10px;
+  font-size: 13.5px;
+  cursor: grab;
+}
+.shell-task-role {
+  font-family: "DM Sans", sans-serif;
+  font-weight: 700;
+  font-size: 10px;
+  color: var(--role-color, var(--s-text-3));
+  background: rgba(224, 163, 57, 0.14);
+  padding: 3px 7px;
+  border-radius: 7px;
+  display: inline-block;
+  margin-bottom: 7px;
+}
+.shell-add-task {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px dashed var(--s-border);
+  color: var(--s-text-3);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  background: transparent;
+  width: 100%;
+  font-family: inherit;
+}
+.shell-add-task:hover {
+  color: var(--s-text-2);
+  border-color: var(--s-text-3);
+}
+
+/* matches */
+.shell-match-role-block {
+  margin-bottom: 32px;
+}
+.shell-match-role-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 5px;
+}
+.shell-match-role-code {
+  font-family: "DM Sans", sans-serif;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--s-amber);
+}
+.shell-match-role-title {
+  font-weight: 700;
+  font-size: 16px;
+  font-family: "DM Sans", sans-serif;
+}
+.shell-cand-card {
+  border: 1px solid var(--s-border);
+  background: var(--s-bg-side);
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 12px;
+}
+.shell-cand-card.top-match {
+  border-color: var(--s-amber);
+}
+.shell-top-badge {
+  font-family: "DM Sans", sans-serif;
+  font-weight: 700;
+  font-size: 10px;
+  color: var(--s-amber-ink);
+  background: var(--s-amber);
+  padding: 3px 8px;
+  border-radius: 9px;
+  margin-right: 9px;
+}
+.shell-cand-top {
+  display: flex;
+  align-items: center;
+  margin-bottom: 7px;
+}
+.shell-cand-name {
+  font-weight: 700;
+  font-size: 14.5px;
+}
+.shell-cand-headline {
+  font-size: 12.5px;
+  color: var(--s-text-3);
+  margin-bottom: 9px;
+}
+.shell-mini-chip {
+  font-size: 11px;
+  border: 1px solid var(--s-border);
+  border-radius: 11px;
+  padding: 3px 9px;
+  color: var(--s-text-2);
+}
+
+/* chat */
+.shell-chat-panel {
+  border: 1px solid var(--s-border);
+  background: var(--s-bg-side);
+  height: 420px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.shell-msgs {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.shell-msg {
+  display: flex;
+  gap: 11px;
+}
+.shell-msg-body b {
+  font-size: 14px;
+  color: var(--s-text);
+  margin-right: 9px;
+}
+.shell-msg-body p {
+  font-size: 14px;
+  color: var(--s-text-2);
+  line-height: 1.55;
+  margin-top: 2px;
+}
+.shell-composer {
+  display: flex;
+  border-top: 1px solid var(--s-border);
+}
+.shell-composer input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--s-text);
+  padding: 14px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.shell-composer button {
+  padding: 0 22px;
+  background: var(--s-amber);
+  color: var(--s-amber-ink);
+  border: none;
+  font-family: "DM Sans", sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* card + auth buttons reused on sign-in and create-project screens */
+.shell-card {
+  background: var(--s-bg-side);
+  border: 1px solid var(--s-border);
+  border-radius: 16px;
+  padding: 40px;
+}
+.shell-auth-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--s-bg-elevated);
+  border: 1px solid var(--s-border);
+  color: var(--s-text);
+  font-family: "DM Sans", sans-serif;
+  font-weight: 500;
+  font-size: 14.5px;
+  border-radius: 10px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+.shell-auth-btn:hover {
+  background: var(--s-bg-hover);
+}
+.shell-auth-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.shell-auth-btn.primary {
+  background: var(--s-amber);
+  color: var(--s-amber-ink);
+  border: none;
+  font-weight: 700;
+  justify-content: center;
+}
+.shell-auth-btn.primary:hover {
+  opacity: 0.9;
+}
+
+.shell-input {
+  background: var(--s-bg-elevated);
+  border: 1px solid var(--s-border);
+  color: var(--s-text);
+  font-family: "DM Sans", sans-serif;
+  font-size: 14.5px;
+  padding: 12px 14px;
+  border-radius: 9px;
+}
