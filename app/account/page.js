@@ -78,6 +78,24 @@ const PREF_TABS = [
   { key: "danger", label: "Danger zone" },
 ];
 
+// Curated accent presets for the custom color picker — a spread of hues
+// that all read fine as both a button fill (with computed contrast text)
+// and an active-state highlight, in both light and dark mode.
+const ACCENT_PRESETS = [
+  { label: "Default", value: "" },
+  { label: "Amber", value: "#e0a339" },
+  { label: "Coral", value: "#e5534b" },
+  { label: "Rose", value: "#e08a6f" },
+  { label: "Violet", value: "#c46fd8" },
+  { label: "Blue", value: "#6fa8d8" },
+  { label: "Teal", value: "#4fb8b0" },
+  { label: "Green", value: "#5fbf8f" },
+];
+
+function isValidHex(v) {
+  return /^#[0-9a-fA-F]{6}$/.test(v);
+}
+
 // Same list translateMessage() in project/[id]/page.js accepts — kept here
 // so the dropdown and the actual translate call can't drift apart.
 const TRANSLATE_LANGUAGES = [
@@ -125,6 +143,8 @@ export default function AccountSettingsPage() {
   const [micDevices, setMicDevices] = useState([]);
   const [camDevices, setCamDevices] = useState([]);
   const [deviceError, setDeviceError] = useState("");
+  const [accentHexDraft, setAccentHexDraft] = useState("");
+  const [accentHexError, setAccentHexError] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -697,11 +717,110 @@ export default function AccountSettingsPage() {
           {prefTab === "appearance" && (
             <>
               <p style={sectionLabelStyle()}>Theme</p>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-amber)", borderRadius: 10, marginBottom: 24 }}>
-                <div style={{ width: 16, height: 16, borderRadius: "50%", background: "var(--s-bg-main)", border: "1px solid var(--s-border)" }} />
-                <div style={{ flex: 1, fontSize: 13.5 }}>Dark</div>
-                <span style={{ fontSize: 11, color: "var(--s-text-3)" }}>Only option for now</span>
+              <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
+                {[
+                  { key: "dark", label: "Dark", swatchBg: "#202124", swatchBorder: "#333338" },
+                  { key: "light", label: "Light", swatchBg: "#ffffff", swatchBorder: "#dcdce1" },
+                ].map((t) => {
+                  const active = (prefs.theme || "dark") === t.key;
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => savePreference({ theme: t.key })}
+                      style={{
+                        flex: 1,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "12px 14px",
+                        background: "var(--s-bg-side)",
+                        border: active ? "1px solid var(--s-amber)" : "1px solid var(--s-border)",
+                        borderRadius: 10,
+                        cursor: "pointer",
+                        fontFamily: "'DM Sans', sans-serif",
+                        color: "var(--s-text)",
+                      }}
+                    >
+                      <span style={{ width: 16, height: 16, borderRadius: "50%", background: t.swatchBg, border: `1px solid ${t.swatchBorder}`, flex: "none" }} />
+                      <span style={{ fontSize: 13.5 }}>{t.label}</span>
+                      {active && <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--s-amber)" }}>✓</span>}
+                    </button>
+                  );
+                })}
               </div>
+
+              <p style={sectionLabelStyle()}>Accent color</p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
+                {ACCENT_PRESETS.map((p) => {
+                  const active = (prefs.accentColor || "") === p.value;
+                  return (
+                    <button
+                      key={p.label}
+                      type="button"
+                      title={p.label}
+                      onClick={() => {
+                        savePreference({ accentColor: p.value });
+                        setAccentHexDraft("");
+                        setAccentHexError(false);
+                      }}
+                      style={{
+                        width: 30,
+                        height: 30,
+                        borderRadius: "50%",
+                        cursor: "pointer",
+                        padding: 0,
+                        background: p.value || "repeating-conic-gradient(var(--s-bg-elevated) 0% 25%, var(--s-bg-hover) 0% 50%) 50% / 10px 10px",
+                        border: active ? "2px solid var(--s-text)" : "2px solid var(--s-border)",
+                        boxShadow: active ? "0 0 0 2px var(--s-bg-main), 0 0 0 3px var(--s-text)" : "none",
+                      }}
+                    />
+                  );
+                })}
+              </div>
+              {/* The "custom" part of the custom color picker — a plain hex
+                  field instead of the native <input type="color"> swatch
+                  (which renders as a small OS-styled square that clashes
+                  with every other control here), with a live preview chip
+                  next to it. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                <span
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: "50%",
+                    flex: "none",
+                    background: isValidHex(accentHexDraft) ? accentHexDraft : prefs.accentColor || "var(--s-bg-elevated)",
+                    border: "2px solid var(--s-border)",
+                  }}
+                />
+                <input
+                  value={accentHexDraft || prefs.accentColor || ""}
+                  onChange={(e) => {
+                    const v = e.target.value.startsWith("#") ? e.target.value : `#${e.target.value}`;
+                    setAccentHexDraft(v);
+                    setAccentHexError(false);
+                  }}
+                  onBlur={() => {
+                    if (!accentHexDraft) return;
+                    if (isValidHex(accentHexDraft)) {
+                      savePreference({ accentColor: accentHexDraft });
+                      setAccentHexError(false);
+                    } else {
+                      setAccentHexError(true);
+                    }
+                  }}
+                  onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                  placeholder="#6fa8d8"
+                  maxLength={7}
+                  className="shell-input"
+                  style={{ width: 140, fontFamily: "monospace" }}
+                />
+                {accentHexError && <span style={{ fontSize: 11.5, color: "#e5534b" }}>Not a valid hex color.</span>}
+              </div>
+              <p style={{ fontSize: 11.5, color: "var(--s-text-3)", marginBottom: 24 }}>
+                Applies to buttons, active states, and highlights app-wide. &ldquo;Default&rdquo; matches the built-in monotone look.
+              </p>
 
               <p style={sectionLabelStyle()}>Layout</p>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 24 }}>

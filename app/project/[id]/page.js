@@ -38,7 +38,7 @@ import Autocomplete from "../../components/Autocomplete";
 import TopNav from "../../components/TopNav";
 import CADViewer, { guessCadKind } from "../../components/CADViewer";
 import Toggle from "../../components/Toggle";
-import { IconGear, IconMic, IconSparkle, IconLayout, IconCheckSquare, IconTarget, IconCalendar, IconChat } from "../../components/icons";
+import { IconGear, IconMic, IconSparkle, IconLayout, IconCheckSquare, IconTarget, IconCalendar, IconChat, IconGithubMark, IconDriveMark } from "../../components/icons";
 import { focusModeInfo } from "../../components/FocusMode";
 import VideoCall from "./VideoCall";
 import { useAuthGate } from "../../../lib/useAuthGate";
@@ -1226,33 +1226,6 @@ export default function ProjectPage() {
             )}
           </div>
 
-          {(project?.driveFolderUrl || project?.githubRepoUrl) && (
-            <div style={{ display: "flex", gap: 6, padding: "0 14px 12px" }}>
-              {project.driveFolderUrl && (
-                <a
-                  href={project.driveFolderUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Open the project's Google Drive folder"
-                  style={{ flex: 1, textAlign: "center", padding: "6px 8px", fontSize: 11, fontWeight: 600, color: "var(--s-text-2)", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", borderRadius: 7, textDecoration: "none" }}
-                >
-                  Drive
-                </a>
-              )}
-              {project.githubRepoUrl && (
-                <a
-                  href={project.githubRepoUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Open the project's GitHub repo"
-                  style={{ flex: 1, textAlign: "center", padding: "6px 8px", fontSize: 11, fontWeight: 600, color: "var(--s-text-2)", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", borderRadius: 7, textDecoration: "none" }}
-                >
-                  GitHub
-                </a>
-              )}
-            </div>
-          )}
-
           <div className="shell-chan-group">
             <div className="shell-chan-group-label">{project?.name}</div>
             {CHANNELS.map((c) => (
@@ -1270,11 +1243,39 @@ export default function ProjectPage() {
             ))}
           </div>
 
-          {/* Files/Documentation/Settings sit right below the regular channel
-              list (not pinned to the very bottom of the sidebar) so the
-              divider line above them stays close to "Team chat" instead of
-              floating in the middle of empty space on short channel lists —
-              the spacer below absorbs whatever room is left instead. */}
+          {(project?.driveFolderUrl || project?.githubRepoUrl) && (
+            <div className="shell-chan-group" style={{ paddingTop: 4 }}>
+              {project.driveFolderUrl && (
+                <a
+                  href={project.driveFolderUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shell-chan"
+                  style={{ textDecoration: "none" }}
+                >
+                  <IconDriveMark size={14} />
+                  Drive folder
+                </a>
+              )}
+              {project.githubRepoUrl && (
+                <a
+                  href={project.githubRepoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shell-chan"
+                  style={{ textDecoration: "none" }}
+                >
+                  <IconGithubMark size={14} />
+                  GitHub repo
+                </a>
+              )}
+            </div>
+          )}
+
+          <div style={{ flex: 1 }} />
+
+          {/* Files/Documentation/Settings pinned to the true bottom of the
+              sidebar, separated from everything above by the divider. */}
           <div className="shell-chan-group" style={{ paddingTop: 10, borderTop: "1px solid var(--s-border)" }}>
             <button
               className={"shell-chan" + (tab === "files" ? " active" : "")}
@@ -1295,7 +1296,6 @@ export default function ProjectPage() {
               <IconGear /> Settings
             </button>
           </div>
-          <div style={{ flex: 1 }} />
         </div>
 
         <div className="shell-main">
@@ -1306,169 +1306,183 @@ export default function ProjectPage() {
 
           {tab === "overview" && project && (
             <div className="shell-view">
-              {project.imageUrl && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={project.imageUrl}
-                  alt=""
-                  style={{ width: "100%", maxHeight: 220, objectFit: "cover", borderRadius: 14, border: "1px solid var(--s-border)", marginBottom: 22 }}
-                />
-              )}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginBottom: 24 }}>
-                {[
-                  { label: "Members", value: (project.memberIds || []).length },
-                  { label: "Open tasks", value: tasks.filter((t) => t.status !== "done").length },
-                  { label: "Done", value: tasks.filter((t) => t.status === "done").length },
-                  { label: "Open roles", value: (project.roles || []).length },
-                ].map((s) => (
-                  <div key={s.label} style={{ padding: "14px 16px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 12 }}>
-                    <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 22 }}>{s.value}</div>
-                    <div style={{ fontSize: 11, color: "var(--s-text-3)", marginTop: 2 }}>{s.label}</div>
-                  </div>
-                ))}
-              </div>
+              <div className="shell-overview-grid">
+                <div style={{ minWidth: 0 }}>
+                  {project.imageUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={project.imageUrl}
+                      alt=""
+                      style={{ width: "100%", maxHeight: 220, objectFit: "cover", borderRadius: 14, border: "1px solid var(--s-border)", marginBottom: 22 }}
+                    />
+                  )}
 
-              <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 6 }}>
-                Brief
-              </p>
-              <p className="shell-brief-text" style={{ marginBottom: 16 }}>
-                {project.brief || "No brief yet."}
-              </p>
-
-              <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
-                Team
-              </p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 24 }}>
-                {(project.memberIds || []).map((uid) => {
-                  void presenceTick; // re-evaluate isOnline() on each tick
-                  const profile = memberProfiles[uid] || {};
-                  const online = isOnline(profile.lastActiveAt);
-                  const name = profile.name || (uid === user?.uid ? user?.displayName || user?.email : "Member");
-                  return (
-                    <div
-                      key={uid}
-                      style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px 6px 6px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 999 }}
-                    >
-                      <span className="shell-presence-wrap">
-                        {profile.avatarUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={profile.avatarUrl} alt="" style={{ width: 26, height: 26, borderRadius: "50%", objectFit: "cover" }} />
-                        ) : (
-                          <span className="shell-avatar">{(name || "?")[0]?.toUpperCase()}</span>
-                        )}
-                        <span className={"shell-presence-dot" + (online ? " online" : "")} title={online ? "Online" : lastSeenLabel(profile.lastActiveAt)} />
-                      </span>
-                      <span style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                        {name}
-                        {uid === project.ownerId && <span style={{ color: "var(--s-text-3)" }}> · Owner</span>}
-                        {(() => {
-                          const fm = focusModeInfo(profile.focusMode);
-                          return fm ? (
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--s-text-3)" }} title={fm.label}>
-                              <span style={{ width: 6, height: 6, borderRadius: "50%", background: fm.color }} />
-                              {fm.label}
-                            </span>
-                          ) : null;
-                        })()}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {tasks.length > 0 && (
-                <>
-                  <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
-                    Recently added tasks
+                  <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 6 }}>
+                    Brief
                   </p>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 24 }}>
-                    {tasks
-                      .slice()
-                      .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0))
-                      .slice(0, 4)
-                      .map((t) => {
-                        const col = COLUMNS.find((c) => c.key === t.status);
+                  <p className="shell-brief-text" style={{ marginBottom: 24 }}>
+                    {project.brief || "No brief yet."}
+                  </p>
+
+                  {tasks.length > 0 && (
+                    <>
+                      <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+                        Recently added tasks
+                      </p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 24 }}>
+                        {tasks
+                          .slice()
+                          .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0))
+                          .slice(0, 4)
+                          .map((t) => {
+                            const col = COLUMNS.find((c) => c.key === t.status);
+                            return (
+                              <button
+                                key={t.id}
+                                type="button"
+                                onClick={() => setTab("tasks")}
+                                style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 9, textAlign: "left", cursor: "pointer", color: "var(--s-text)", fontFamily: "inherit", fontSize: 13 }}
+                              >
+                                <span style={{ flex: 1 }}>{t.title}</span>
+                                {col && <span style={{ fontSize: 10.5, color: "var(--s-text-3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{col.label}</span>}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    </>
+                  )}
+
+                  {(project.driveFolderUrl || project.githubRepoUrl) && (
+                    <div style={{ marginBottom: 24 }}>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {project.driveFolderUrl && (
+                          <a href={project.driveFolderUrl} target="_blank" rel="noopener noreferrer" className="shell-attachment-card">
+                            <span className="shell-attachment-badge drive">Drive</span>
+                            <span className="shell-attachment-title">Project folder</span>
+                          </a>
+                        )}
+                        {project.githubRepoUrl && (
+                          <a href={project.githubRepoUrl} target="_blank" rel="noopener noreferrer" className="shell-attachment-card">
+                            <span className="shell-attachment-badge github">GitHub</span>
+                            <span className="shell-attachment-title">{project.githubRepoFullName || "Repository"}</span>
+                          </a>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--s-text-3)", marginTop: 6 }}>
+                        {project.driveFolderUrl && "Anyone with the Drive link can edit it. "}
+                        {project.githubRepoUrl && "Members get a GitHub repo invite (connect GitHub in Preferences to receive it)."}
+                      </div>
+                    </div>
+                  )}
+
+                  <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+                    Roles needed
+                  </p>
+                  {(project.roles || []).length === 0 ? (
+                    <p style={{ fontSize: 13, color: "var(--s-text-3)" }}>No roles added yet.</p>
+                  ) : (
+                    <div className="shell-role-grid">
+                      {project.roles.map((r, i) => (
+                        <div className="shell-role-card" key={i}>
+                          <div className="shell-role-code">{r.code}-101</div>
+                          <div className="shell-role-title">{r.title}</div>
+                          <div className="shell-role-desc">{r.description}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <form onSubmit={addRole} style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                    <input
+                      value={newRoleCode}
+                      onChange={(e) => setNewRoleCode(e.target.value)}
+                      placeholder="Code (e.g. SW)"
+                      style={{ width: 110, background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", color: "var(--s-text)", padding: 8, fontSize: 12, borderRadius: 6 }}
+                    />
+                    <Autocomplete
+                      value={newRoleTitle}
+                      onChange={setNewRoleTitle}
+                      search={(q) => searchRoleTitles(q)}
+                      onSelect={(item) => {
+                        setNewRoleTitle(item.title);
+                        if (!newRoleCode.trim()) setNewRoleCode(item.code);
+                      }}
+                      getLabel={(item) => item.title}
+                      getSublabel={(item) => item.abbr || item.code}
+                      placeholder="Role title (try 'chief')"
+                      style={{ flex: 1 }}
+                      inputStyle={{ width: "100%", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", color: "var(--s-text)", padding: 8, fontSize: 12, borderRadius: 6, fontFamily: "inherit" }}
+                    />
+                    <button type="submit" className="shell-auth-btn primary" style={{ width: "auto", margin: 0, padding: "8px 16px" }}>
+                      Add
+                    </button>
+                  </form>
+                </div>
+
+                <div className="shell-overview-rail">
+                  <div>
+                    <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+                      At a glance
+                    </p>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      {[
+                        { label: "Members", value: (project.memberIds || []).length },
+                        { label: "Open tasks", value: tasks.filter((t) => t.status !== "done").length },
+                        { label: "Done", value: tasks.filter((t) => t.status === "done").length },
+                        { label: "Open roles", value: (project.roles || []).length },
+                      ].map((s) => (
+                        <div key={s.label} style={{ padding: "14px 16px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 12 }}>
+                          <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 22 }}>{s.value}</div>
+                          <div style={{ fontSize: 11, color: "var(--s-text-3)", marginTop: 2 }}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+                      Team
+                    </p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {(project.memberIds || []).map((uid) => {
+                        void presenceTick; // re-evaluate isOnline() on each tick
+                        const profile = memberProfiles[uid] || {};
+                        const online = isOnline(profile.lastActiveAt);
+                        const name = profile.name || (uid === user?.uid ? user?.displayName || user?.email : "Member");
                         return (
-                          <button
-                            key={t.id}
-                            type="button"
-                            onClick={() => setTab("tasks")}
-                            style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 9, textAlign: "left", cursor: "pointer", color: "var(--s-text)", fontFamily: "inherit", fontSize: 13 }}
+                          <div
+                            key={uid}
+                            style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px 6px 6px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 999 }}
                           >
-                            <span style={{ flex: 1 }}>{t.title}</span>
-                            {col && <span style={{ fontSize: 10.5, color: "var(--s-text-3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{col.label}</span>}
-                          </button>
+                            <span className="shell-presence-wrap">
+                              {profile.avatarUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={profile.avatarUrl} alt="" style={{ width: 26, height: 26, borderRadius: "50%", objectFit: "cover" }} />
+                              ) : (
+                                <span className="shell-avatar">{(name || "?")[0]?.toUpperCase()}</span>
+                              )}
+                              <span className={"shell-presence-dot" + (online ? " online" : "")} title={online ? "Online" : lastSeenLabel(profile.lastActiveAt)} />
+                            </span>
+                            <span style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                              {name}
+                              {uid === project.ownerId && <span style={{ color: "var(--s-text-3)" }}> · Owner</span>}
+                              {(() => {
+                                const fm = focusModeInfo(profile.focusMode);
+                                return fm ? (
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--s-text-3)" }} title={fm.label}>
+                                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: fm.color }} />
+                                    {fm.label}
+                                  </span>
+                                ) : null;
+                              })()}
+                            </span>
+                          </div>
                         );
                       })}
-                  </div>
-                </>
-              )}
-
-              {(project.driveFolderUrl || project.githubRepoUrl) && (
-                <div style={{ marginBottom: 24 }}>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {project.driveFolderUrl && (
-                      <a href={project.driveFolderUrl} target="_blank" rel="noopener noreferrer" className="shell-attachment-card">
-                        <span className="shell-attachment-badge drive">Drive</span>
-                        <span className="shell-attachment-title">Project folder</span>
-                      </a>
-                    )}
-                    {project.githubRepoUrl && (
-                      <a href={project.githubRepoUrl} target="_blank" rel="noopener noreferrer" className="shell-attachment-card">
-                        <span className="shell-attachment-badge github">GitHub</span>
-                        <span className="shell-attachment-title">{project.githubRepoFullName || "Repository"}</span>
-                      </a>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--s-text-3)", marginTop: 6 }}>
-                    {project.driveFolderUrl && "Anyone with the Drive link can edit it. "}
-                    {project.githubRepoUrl && "Members get a GitHub repo invite (connect GitHub in Preferences to receive it)."}
-                  </div>
-                </div>
-              )}
-
-              <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
-                Roles needed
-              </p>
-              {(project.roles || []).length === 0 ? (
-                <p style={{ fontSize: 13, color: "var(--s-text-3)" }}>No roles added yet.</p>
-              ) : (
-                <div className="shell-role-grid">
-                  {project.roles.map((r, i) => (
-                    <div className="shell-role-card" key={i}>
-                      <div className="shell-role-code">{r.code}-101</div>
-                      <div className="shell-role-title">{r.title}</div>
-                      <div className="shell-role-desc">{r.description}</div>
                     </div>
-                  ))}
+                  </div>
                 </div>
-              )}
-
-              <form onSubmit={addRole} style={{ display: "flex", gap: 8, marginTop: 14 }}>
-                <input
-                  value={newRoleCode}
-                  onChange={(e) => setNewRoleCode(e.target.value)}
-                  placeholder="Code (e.g. SW)"
-                  style={{ width: 110, background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", color: "var(--s-text)", padding: 8, fontSize: 12, borderRadius: 6 }}
-                />
-                <Autocomplete
-                  value={newRoleTitle}
-                  onChange={setNewRoleTitle}
-                  search={(q) => searchRoleTitles(q)}
-                  onSelect={(item) => {
-                    setNewRoleTitle(item.title);
-                    if (!newRoleCode.trim()) setNewRoleCode(item.code);
-                  }}
-                  getLabel={(item) => item.title}
-                  getSublabel={(item) => item.abbr || item.code}
-                  placeholder="Role title (try 'chief')"
-                  style={{ flex: 1 }}
-                  inputStyle={{ width: "100%", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", color: "var(--s-text)", padding: 8, fontSize: 12, borderRadius: 6, fontFamily: "inherit" }}
-                />
-                <button type="submit" className="shell-auth-btn primary" style={{ width: "auto", margin: 0, padding: "8px 16px" }}>
-                  Add
-                </button>
-              </form>
+              </div>
             </div>
           )}
 
@@ -2298,6 +2312,12 @@ export default function ProjectPage() {
                         key={m.id}
                         style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, flexWrap: "wrap" }}
                       >
+                        {memberProfiles[m.senderId]?.avatarUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={memberProfiles[m.senderId].avatarUrl} alt="" className="shell-avatar" style={{ width: 26, height: 26, flex: "none" }} />
+                        ) : (
+                          <span className="shell-avatar" style={{ width: 26, height: 26, fontSize: 10, flex: "none" }}>{(m.senderName || "?")[0]?.toUpperCase()}</span>
+                        )}
                         <span className={"shell-attachment-badge " + (m.provider || "voice")} style={{ flex: "none" }}>
                           {m.type === "voice" ? "Voice" : m.provider === "drive" ? "Drive" : m.provider === "github" ? "GitHub" : m.provider === "upload" ? "File" : "Link"}
                         </span>

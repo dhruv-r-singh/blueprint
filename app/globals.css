@@ -121,6 +121,38 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* Tells the browser (and native form controls specifically — date/time
+     pickers, the color swatch input, scrollbars) to render in dark style by
+     default, so they don't show up as a jarring white box against the dark
+     theme. Light mode flips this below. */
+  color-scheme: dark;
+}
+
+/* Light mode — toggled from Preferences → Appearance, applied as a class on
+   <body> (see TopNav.js) so it's set before the very first paint on every
+   signed-in page. Every one of these is the same variable used throughout
+   the app already, so this is the entire theme swap — no component-level
+   light/dark branching needed anywhere else. --s-amber/-2/-ink are still
+   set here as the light-mode DEFAULT accent (dark chip on white, mirroring
+   dark mode's light-chip-on-dark), but get overridden live by the accent
+   color picker via an inline style on this same .shell element, which
+   always wins over these class-based values. */
+body.light-mode .shell {
+  --s-bg-side: #f4f4f5;
+  --s-bg-main: #ffffff;
+  --s-bg-elevated: #ececee;
+  --s-bg-hover: #e6e6e9;
+  --s-border: #dcdce1;
+  --s-text: #1a1a1c;
+  --s-text-2: #55565c;
+  --s-text-3: #8a8b91;
+  --s-amber: #1a1a1c;
+  --s-amber-2: #1a1a1c;
+  --s-amber-ink: #ffffff;
+  color-scheme: light;
+}
+body.light-mode {
+  background: #ffffff;
 }
 
 .shell-topbar {
@@ -195,6 +227,8 @@ body {
 }
 img.shell-avatar {
   color: transparent;
+  display: block;
+  vertical-align: top;
 }
 
 /* consolidated hamburger nav (TopNav.js) */
@@ -482,7 +516,31 @@ img.shell-avatar {
   width: 100%;
 }
 
-/* overview */
+/* overview — two-column layout so wide viewports don't just stretch a
+   single column of content edge to edge; the rail picks up the stats +
+   team panel that used to sit inline above the brief. */
+.shell-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 32px;
+  align-items: start;
+}
+.shell-overview-rail {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+@media (max-width: 880px) {
+  .shell-overview-grid {
+    grid-template-columns: 1fr;
+  }
+  .shell-overview-rail {
+    position: static;
+  }
+}
+
 .shell-brief-text {
   font-size: 15px;
   line-height: 1.65;
@@ -780,6 +838,7 @@ body.compact-mode .shell-task-card {
 
 .shell-msg {
   display: flex;
+  align-items: flex-start;
   gap: 11px;
   border-radius: 8px;
   transition: background 0.15s ease;
@@ -1253,6 +1312,57 @@ button.ghost:hover {
   font-size: 14.5px;
   padding: 12px 14px;
   border-radius: 9px;
+}
+
+/* <select> keeps its OS-default dropdown arrow otherwise, which looks out
+   of place next to every custom-styled control around it — swap it for a
+   flat chevron that matches the rest of the icon set. */
+select.shell-input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2397989f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 14px;
+  padding-right: 36px;
+  cursor: pointer;
+}
+body.light-mode select.shell-input {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2355565c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+}
+
+/* Range sliders (whiteboard brush size/opacity, etc.) — browsers render
+   these wildly differently by default; this makes every one of them a
+   plain flat track + circular thumb in the app's own palette instead. */
+input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--s-border);
+  outline: none;
+  cursor: pointer;
+  vertical-align: middle;
+}
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--s-text);
+  cursor: pointer;
+  border: 2px solid var(--s-bg-main);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--s-text);
+  cursor: pointer;
+  border: none;
 }
 
 /* autocomplete dropdown (role titles, skills) */

@@ -12,7 +12,7 @@ import { useAuthGate } from "../../lib/useAuthGate";
 import Autocomplete from "../components/Autocomplete";
 import AvatarEditor from "../components/AvatarEditor";
 import TopNav from "../components/TopNav";
-import { IconPencil, IconStar } from "../components/icons";
+import { IconPencil, IconStar, IconGithubMark } from "../components/icons";
 
 export default function ProfilePage() {
   const [user, setUser] = useState(undefined);
@@ -314,7 +314,7 @@ export default function ProfilePage() {
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
               {portfolio.map((p, i) => (
                 <div
-                  key={i}
+                  key={"manual-" + i}
                   style={{
                     display: "flex",
                     alignItems: "flex-start",
@@ -342,7 +342,52 @@ export default function ProfilePage() {
                   </span>
                 </div>
               ))}
-              {portfolio.length === 0 && (
+
+              {/* GitHub repos aren't stored in `portfolio` — they're read live
+                  from GitHub every time this page loads (see the
+                  listPublicGithubRepos effect above), so they can't go stale
+                  or duplicate on reconnect. Rendered with the same card style
+                  as manual entries per request, just with a GitHub badge and
+                  no remove button (removing one here wouldn't mean anything —
+                  it'd just reappear, since the source of truth is GitHub
+                  itself, not this list). */}
+              {githubUsername && reposLoading && (
+                <span style={{ fontSize: 12, color: "var(--s-text-3)" }}>Loading GitHub repositories…</span>
+              )}
+              {githubUsername && reposError && (
+                <span style={{ fontSize: 12, color: "#e5534b" }}>{reposError}</span>
+              )}
+              {githubRepos.map((r) => (
+                <div
+                  key={"gh-" + r.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 10,
+                    padding: "10px 12px",
+                    border: "1px solid var(--s-border)",
+                    borderRadius: 10,
+                    background: "var(--s-bg-side)",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <a href={r.html_url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--s-amber)", fontWeight: 600, fontSize: 13.5, textDecoration: "none" }}>
+                      <IconGithubMark size={12} />
+                      {r.name}
+                    </a>
+                    {r.description && (
+                      <div style={{ fontSize: 12, color: "var(--s-text-3)", marginTop: 2 }}>{r.description}</div>
+                    )}
+                  </div>
+                  {r.stargazers_count > 0 && (
+                    <span style={{ fontSize: 11, color: "var(--s-text-3)", flex: "none", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                      <IconStar size={11} filled /> {r.stargazers_count}
+                    </span>
+                  )}
+                </div>
+              ))}
+
+              {portfolio.length === 0 && githubRepos.length === 0 && !reposLoading && (
                 <span style={{ fontSize: 12, color: "var(--s-text-3)" }}>No portfolio items yet — add projects, case studies, or work samples.</span>
               )}
             </div>
@@ -373,39 +418,6 @@ export default function ProfilePage() {
                 Add to portfolio
               </button>
             </form>
-
-            {githubUsername && (
-              <>
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", margin: "28px 0 10px" }}>
-                  GitHub repositories
-                </p>
-                {reposLoading && <p style={{ fontSize: 12, color: "var(--s-text-3)" }}>Loading…</p>}
-                {reposError && <p style={{ fontSize: 12, color: "#e5534b" }}>{reposError}</p>}
-                {!reposLoading && !reposError && githubRepos.length === 0 && (
-                  <p style={{ fontSize: 12, color: "var(--s-text-3)" }}>No public repositories yet.</p>
-                )}
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {githubRepos.map((r) => (
-                    <a
-                      key={r.id}
-                      href={r.html_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="shell-attachment-card"
-                      style={{ maxWidth: 480 }}
-                    >
-                      <span className="shell-attachment-badge github">GitHub</span>
-                      <span className="shell-attachment-title">{r.name}</span>
-                      {r.stargazers_count > 0 && (
-                        <span className="shell-attachment-meta" style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                          <IconStar size={11} filled /> {r.stargazers_count}
-                        </span>
-                      )}
-                    </a>
-                  ))}
-                </div>
-              </>
-            )}
           </>
         )}
       </div>

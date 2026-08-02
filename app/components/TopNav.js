@@ -15,6 +15,18 @@ import { auth, db } from "../../lib/firebase";
 import { startPresenceHeartbeat } from "../../lib/presence";
 import FocusMode from "./FocusMode";
 
+/** Picks black or white text for a given hex background, via standard relative-luminance. */
+function contrastInk(hex) {
+  const clean = (hex || "").replace("#", "");
+  if (clean.length !== 6) return "#17181a";
+  const r = parseInt(clean.slice(0, 2), 16) / 255;
+  const g = parseInt(clean.slice(2, 4), 16) / 255;
+  const b = parseInt(clean.slice(4, 6), 16) / 255;
+  const lin = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  const luminance = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return luminance > 0.45 ? "#17181a" : "#ffffff";
+}
+
 export default function TopNav({ user, extraLink }) {
   const [open, setOpen] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState("");
@@ -48,15 +60,34 @@ export default function TopNav({ user, extraLink }) {
       const prefs = snap.data()?.preferences || {};
       document.body.classList.toggle("reduce-motion", Boolean(prefs.reduceMotion));
       document.body.classList.toggle("compact-mode", Boolean(prefs.compactMode));
+      document.body.classList.toggle("light-mode", prefs.theme === "light");
       // "zoom" isn't standard CSS, but works in Chromium/Electron (this
       // app's primary desktop target) and just no-ops elsewhere — a real
       // rem-based rescale would need every fixed px font-size in the app
       // reworked, which is out of scope for a preference toggle.
       document.body.style.zoom = prefs.largerText ? "1.12" : "";
+
+      // Accent color — .shell{} in globals.css declares --s-amber directly
+      // on itself as the theme default, which beats any override set on an
+      // ancestor (body/:root) no matter how it's set. Setting the property
+      // via inline style on the .shell element ITSELF is the one thing that
+      // outranks that, so that's where a custom accent gets applied.
+      const shellEl = document.querySelector(".shell");
+      if (shellEl) {
+        if (prefs.accentColor) {
+          shellEl.style.setProperty("--s-amber", prefs.accentColor);
+          shellEl.style.setProperty("--s-amber-2", prefs.accentColor);
+          shellEl.style.setProperty("--s-amber-ink", contrastInk(prefs.accentColor));
+        } else {
+          shellEl.style.removeProperty("--s-amber");
+          shellEl.style.removeProperty("--s-amber-2");
+          shellEl.style.removeProperty("--s-amber-ink");
+        }
+      }
     });
     return () => {
       unsub();
-      document.body.classList.remove("reduce-motion", "compact-mode");
+      document.body.classList.remove("reduce-motion", "compact-mode", "light-mode");
       document.body.style.zoom = "";
     };
   }, [user?.uid]);
