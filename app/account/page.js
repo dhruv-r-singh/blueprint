@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import TopNav from "../components/TopNav";
+import Toggle from "../components/Toggle";
 import {
   onAuthStateChanged,
   signOut,
@@ -9,14 +11,16 @@ import {
   reauthenticateWithPopup,
   unlink,
   updateProfile,
+  deleteUser,
   PhoneMultiFactorGenerator,
 } from "firebase/auth";
-import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, deleteDoc, updateDoc, collection, query, where, getDocs, arrayRemove } from "firebase/firestore";
 import { auth, db, googleProvider, githubProvider, linkedinProvider } from "../../lib/firebase";
 import { describeAuthError } from "../../lib/authErrors";
 import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePublicIdentity } from "../../lib/integrations";
 import { useAuthGate } from "../../lib/useAuthGate";
 import { qrCodeUrl } from "../../lib/inviteCode";
+import { IconPhone, IconLock } from "../../components/icons";
 import {
   enrolledFactors,
   startPhoneEnrollment,
@@ -65,14 +69,32 @@ const PROVIDERS = [
   },
 ];
 
+const PREF_TABS = [
+  { key: "account", label: "My account" },
+  { key: "voice", label: "Voice & Video" },
+  { key: "appearance", label: "Appearance" },
+  { key: "accessibility", label: "Accessibility" },
+  { key: "danger", label: "Danger zone" },
+];
+
+function sectionLabelStyle() {
+  return { fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 };
+}
+
 export default function AccountSettingsPage() {
+  const router = useRouter();
   const [user, setUser] = useState(undefined);
+  const [prefTab, setPrefTab] = useState("account");
   const [busy, setBusy] = useState(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [disablingAccount, setDisablingAccount] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [savingName, setSavingName] = useState(false);
   const [integrations, setIntegrations] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [mfaFactors, setMfaFactors] = useState([]);
   const [mfaMode, setMfaMode] = useState(null); // null | "phone" | "totp"
   const [mfaStep, setMfaStep] = useState("start"); // start | code
@@ -83,6 +105,9 @@ export default function AccountSettingsPage() {
   const [totpQrUri, setTotpQrUri] = useState("");
   const [mfaBusy, setMfaBusy] = useState(false);
   const [mfaError, setMfaErrorMsg] = useState("");
+  const [micDevices, setMicDevices] = useState([]);
+  const [camDevices, setCamDevices] = useState([]);
+  const [deviceError, setDeviceError] = useState("");
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -103,7 +128,36 @@ export default function AccountSettingsPage() {
     return () => unsub();
   }, [user]);
 
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(doc(db, "profiles", user.uid), (snap) => {
+      setProfile(snap.exists() ? snap.data() : {});
+    });
+    return () => unsub();
+  }, [user]);
+
+  // Device labels are only populated once mic/camera permission has been
+  // granted at least once — that's a browser privacy rule, not a bug here.
+  useEffect(() => {
+    if (prefTab !== "voice" || !navigator.mediaDevices?.enumerateDevices) return;
+    navigator.mediaDevices
+      .enumerateDevices()
+      .then((devices) => {
+        setMicDevices(devices.filter((d) => d.kind === "audioinput"));
+        setCamDevices(devices.filter((d) => d.kind === "videoinput"));
+      })
+      .catch(() => setDeviceError("Couldn't list audio/video devices."));
+  }, [prefTab]);
+
   const linkedIds = new Set((user?.providerData || []).map((p) => p.providerId));
+  const prefs = profile?.preferences || {};
+
+  function savePreference(patch) {
+    if (!user) return;
+    setDoc(doc(db, "profiles", user.uid), { preferences: { ...prefs, ...patch } }, { merge: true }).catch((err) =>
+      console.error("Couldn't save preference:", err)
+    );
+  }
 
   function saveFn() {
     return (patch) => setDoc(doc(db, ...integrationsDocPath(user.uid)), patch, { merge: true });
@@ -282,232 +336,428 @@ export default function AccountSettingsPage() {
     }
   }
 
+  async function handleDisableAccount() {
+    if (!user) return;
+    if (!window.confirm("Disable your account? You'll be signed out immediately and won't be able to use Blueprint until you reactivate — nothing is deleted, and you can undo this any time by signing back in.")) {
+      return;
+    }
+    setDisablingAccount(true);
+    setError("");
+    try {
+      await setDoc(doc(db, "profiles", user.uid), { disabled: true, disabledAt: Date.now() }, { merge: true });
+      await signOut(auth);
+      router.replace("/");
+    } catch (err) {
+      setError("Couldn't disable your account — " + (err.message || "try again"));
+      setDisablingAccount(false);
+    }
+  }
+
+  async function handleDeleteAccount() {
+    if (!user || deleteConfirmText.trim().toUpperCase() !== "DELETE") return;
+    setDeletingAccount(true);
+    setError("");
+    try {
+      // Pull the user out of every project they're a member of. Note:
+      // projects they solely owned are left as-is (ownerId will point at a
+      // now-deleted uid) — full ownership transfer/cleanup is out of scope
+      // here; see SETUP_NOTES.md.
+      const memberQ = query(collection(db, "projects"), where("memberIds", "array-contains", user.uid));
+      const memberSnap = await getDocs(memberQ);
+      await Promise.all(
+        memberSnap.docs.map((d) =>
+          updateDoc(doc(db, "projects", d.id), { memberIds: arrayRemove(user.uid) }).catch(() => {})
+        )
+      );
+
+      await deleteDoc(doc(db, "profiles", user.uid, "private", "integrations")).catch(() => {});
+      await deleteDoc(doc(db, "profiles", user.uid, "private", "google")).catch(() => {});
+      await deleteDoc(doc(db, "profiles", user.uid)).catch(() => {});
+
+      await deleteUser(auth.currentUser);
+      router.replace("/");
+    } catch (err) {
+      if (err.code === "auth/requires-recent-login") {
+        setError("This needs a fresh sign-in first — reconnect one of your accounts above (Connected accounts), then try deleting again.");
+      } else {
+        setError("Couldn't delete your account — " + (err.message || "try again"));
+      }
+      setDeletingAccount(false);
+    }
+  }
+
   if (!user) return <div className="shell" />;
 
   return (
     <div className="shell">
       <TopNav user={user} />
 
-      <div className="shell-view" style={{ maxWidth: 560, margin: "0 auto", width: "100%" }}>
-        {user && (
-          <>
-            <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 24, marginBottom: 24 }}>
-              Account settings
-            </h1>
-
-            {error && <p className="notice">{error}</p>}
-            {notice && <p className="notice" style={{ color: "var(--s-green, #5fbf8f)", borderColor: "var(--s-green, #5fbf8f)" }}>{notice}</p>}
-
-            <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
-              Display name
-            </p>
-            <div style={{ display: "flex", gap: 8, marginBottom: 30 }}>
-              <input
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), saveDisplayName())}
-                className="shell-input"
-                style={{ flex: 1 }}
-              />
-              <button onClick={saveDisplayName} disabled={savingName} className="shell-task-add-btn" style={{ padding: "0 18px" }}>
-                {savingName ? "Saving…" : "Save"}
+      <div className="shell-view" style={{ maxWidth: 880, margin: "0 auto", width: "100%", display: "flex", gap: 36, alignItems: "flex-start" }}>
+        <div style={{ width: 170, flex: "none", position: "sticky", top: 32 }}>
+          <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 18 }}>Preferences</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {PREF_TABS.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setPrefTab(t.key)}
+                style={{
+                  textAlign: "left",
+                  padding: "8px 10px",
+                  borderRadius: 7,
+                  border: "none",
+                  background: prefTab === t.key ? "var(--s-bg-elevated)" : "transparent",
+                  color: t.key === "danger" ? "#e5534b" : prefTab === t.key ? "var(--s-text)" : "var(--s-text-2)",
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 13,
+                  fontWeight: prefTab === t.key ? 700 : 500,
+                  cursor: "pointer",
+                }}
+              >
+                {t.label}
               </button>
-            </div>
+            ))}
+          </div>
+        </div>
 
-            <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
-              Connected accounts
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-              {PROVIDERS.map((entry) => {
-                const connected = linkedIds.has(entry.id);
-                const integrated = hasIntegration(entry);
-                return (
-                  <div
-                    key={entry.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      padding: "12px 14px",
-                      background: "var(--s-bg-side)",
-                      border: "1px solid var(--s-border)",
-                      borderRadius: 10,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    {entry.icon}
-                    <div style={{ flex: 1, minWidth: 140 }}>
-                      <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 14 }}>{entry.label}</div>
-                      <div style={{ fontSize: 12, color: connected ? "var(--s-green, #5fbf8f)" : "var(--s-text-3)" }}>
-                        {connected ? "Connected" : "Not connected"}
+        <div style={{ flex: 1, minWidth: 0, maxWidth: 560 }}>
+          {error && <p className="notice">{error}</p>}
+          {notice && <p className="notice" style={{ color: "var(--s-green, #5fbf8f)", borderColor: "var(--s-green, #5fbf8f)" }}>{notice}</p>}
+
+          {prefTab === "account" && (
+            <>
+              <p style={sectionLabelStyle()}>Display name</p>
+              <div style={{ display: "flex", gap: 8, marginBottom: 30 }}>
+                <input
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), saveDisplayName())}
+                  className="shell-input"
+                  style={{ flex: 1 }}
+                />
+                <button onClick={saveDisplayName} disabled={savingName} className="shell-task-add-btn" style={{ padding: "0 18px" }}>
+                  {savingName ? "Saving…" : "Save"}
+                </button>
+              </div>
+
+              <p style={sectionLabelStyle()}>Connected accounts</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                {PROVIDERS.map((entry) => {
+                  const connected = linkedIds.has(entry.id);
+                  const integrated = hasIntegration(entry);
+                  return (
+                    <div
+                      key={entry.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        padding: "12px 14px",
+                        background: "var(--s-bg-side)",
+                        border: "1px solid var(--s-border)",
+                        borderRadius: 10,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {entry.icon}
+                      <div style={{ flex: 1, minWidth: 140 }}>
+                        <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 14 }}>{entry.label}</div>
+                        <div style={{ fontSize: 12, color: connected ? "var(--s-green, #5fbf8f)" : "var(--s-text-3)" }}>
+                          {connected ? "Connected" : "Not connected"}
+                        </div>
+                        {entry.integration === "drive" && (
+                          <div style={{ fontSize: 11, color: integrated ? "var(--s-green, #5fbf8f)" : "var(--s-text-3)", marginTop: 2 }}>
+                            {integrated ? "Drive access active" : connected ? "Drive access expired or not granted" : "Also grants Drive access"}
+                          </div>
+                        )}
+                        {entry.integration === "github" && (
+                          <div style={{ fontSize: 11, color: integrated ? "var(--s-green, #5fbf8f)" : "var(--s-text-3)", marginTop: 2 }}>
+                            {integrated ? "Repo access active" : connected ? "Repo access not granted" : "Also grants repo access"}
+                          </div>
+                        )}
                       </div>
-                      {entry.integration === "drive" && (
-                        <div style={{ fontSize: 11, color: integrated ? "var(--s-green, #5fbf8f)" : "var(--s-text-3)", marginTop: 2 }}>
-                          {integrated ? "Drive access active" : connected ? "Drive access expired or not granted" : "Also grants Drive access"}
-                        </div>
-                      )}
-                      {entry.integration === "github" && (
-                        <div style={{ fontSize: 11, color: integrated ? "var(--s-green, #5fbf8f)" : "var(--s-text-3)", marginTop: 2 }}>
-                          {integrated ? "Repo access active" : connected ? "Repo access not granted" : "Also grants repo access"}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {connected && entry.integration && !integrated && (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        {connected && entry.integration && !integrated && (
+                          <button
+                            onClick={() => grantOrRefresh(entry, { refresh: true })}
+                            disabled={busy !== null}
+                            style={{ padding: "8px 14px", background: "var(--s-amber)", color: "var(--s-amber-ink)", border: "none", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, cursor: busy !== null ? "not-allowed" : "pointer" }}
+                          >
+                            {busy === entry.id ? "Working…" : entry.integration === "drive" ? "Refresh Drive access" : "Grant repo access"}
+                          </button>
+                        )}
                         <button
-                          onClick={() => grantOrRefresh(entry, { refresh: true })}
+                          onClick={() => (connected ? handleDisconnect(entry) : grantOrRefresh(entry))}
                           disabled={busy !== null}
-                          style={{ padding: "8px 14px", background: "var(--s-amber)", color: "var(--s-amber-ink)", border: "none", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, cursor: busy !== null ? "not-allowed" : "pointer" }}
+                          style={{
+                            padding: "8px 14px",
+                            background: connected ? "transparent" : "var(--s-amber)",
+                            color: connected ? "var(--s-text-2)" : "var(--s-amber-ink)",
+                            border: connected ? "1px solid var(--s-border)" : "none",
+                            borderRadius: 7,
+                            fontFamily: "'DM Sans', sans-serif",
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: busy !== null ? "not-allowed" : "pointer",
+                          }}
                         >
-                          {busy === entry.id ? "Working…" : entry.integration === "drive" ? "Refresh Drive access" : "Grant repo access"}
+                          {busy === entry.id ? "Working…" : connected ? "Disconnect" : "Connect"}
                         </button>
-                      )}
-                      <button
-                        onClick={() => (connected ? handleDisconnect(entry) : grantOrRefresh(entry))}
-                        disabled={busy !== null}
-                        style={{
-                          padding: "8px 14px",
-                          background: connected ? "transparent" : "var(--s-amber)",
-                          color: connected ? "var(--s-text-2)" : "var(--s-amber-ink)",
-                          border: connected ? "1px solid var(--s-border)" : "none",
-                          borderRadius: 7,
-                          fontFamily: "'DM Sans', sans-serif",
-                          fontSize: 12,
-                          fontWeight: 600,
-                          cursor: busy !== null ? "not-allowed" : "pointer",
-                        }}
-                      >
-                        {busy === entry.id ? "Working…" : connected ? "Disconnect" : "Connect"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--s-text-3)", marginBottom: 30 }}>
+                Connecting Google or GitHub here (or signing in with them) automatically enables project
+                Drive folders / GitHub repos and chat attachments — no separate setup. Drive access now
+                renews itself in the background, so you shouldn't need "Refresh Drive access" above — it's
+                there as a manual fallback if it ever does lapse.
+              </div>
+
+              <p style={sectionLabelStyle()}>Two-factor authentication</p>
+
+              {mfaFactors.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+                  {mfaFactors.map((f) => (
+                    <div key={f.uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10 }}>
+                      <span style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                        {f.factorId === PhoneMultiFactorGenerator.FACTOR_ID ? <IconPhone size={14} /> : <IconLock size={14} />}
+                        {f.displayName || (f.factorId === PhoneMultiFactorGenerator.FACTOR_ID ? f.phoneNumber : "Authenticator app")}
+                      </span>
+                      <button onClick={() => handleRemoveFactor(f)} style={{ padding: "6px 12px", background: "transparent", border: "1px solid var(--s-border)", color: "var(--s-text-2)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, cursor: "pointer" }}>
+                        Remove
                       </button>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--s-text-3)", marginBottom: 30 }}>
-              Connecting Google or GitHub here (or signing in with them) automatically enables project
-              Drive folders / GitHub repos and chat attachments — no separate setup. Drive access is
-              only good for about an hour at a time; if it lapses, use "Refresh Drive access" above.
-            </div>
+                  ))}
+                </div>
+              )}
+              {mfaFactors.length === 0 && (
+                <p style={{ fontSize: 12, color: "var(--s-text-3)", marginBottom: 14 }}>Not turned on yet — every future sign-in will ask for a second factor once you add one.</p>
+              )}
 
-            <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
-              Two-factor authentication
-            </p>
+              {!mfaMode && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 30 }}>
+                  <button onClick={() => setMfaMode("phone")} style={{ padding: "8px 14px", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", color: "var(--s-text)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, cursor: "pointer" }}>
+                    Add phone number
+                  </button>
+                  <button onClick={() => { setMfaMode("totp"); handleStartTotp(); }} style={{ padding: "8px 14px", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", color: "var(--s-text)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, cursor: "pointer" }}>
+                    Add authenticator app
+                  </button>
+                </div>
+              )}
 
-            {mfaFactors.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-                {mfaFactors.map((f) => (
-                  <div key={f.uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10 }}>
-                    <span style={{ flex: 1, fontSize: 13 }}>
-                      {f.factorId === PhoneMultiFactorGenerator.FACTOR_ID ? "📱" : "🔐"} {f.displayName || (f.factorId === PhoneMultiFactorGenerator.FACTOR_ID ? f.phoneNumber : "Authenticator app")}
-                    </span>
-                    <button onClick={() => handleRemoveFactor(f)} style={{ padding: "6px 12px", background: "transparent", border: "1px solid var(--s-border)", color: "var(--s-text-2)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, cursor: "pointer" }}>
-                      Remove
+              {mfaMode === "phone" && mfaStep === "start" && (
+                <form onSubmit={handleSendPhoneCode} className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
+                  <p style={{ fontSize: 13, marginBottom: 12 }}>Enter your phone number (with country code, e.g. +1 555 555 0100).</p>
+                  <input
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    placeholder="+1 555 555 0100"
+                    className="shell-input"
+                    style={{ width: "100%", marginBottom: 12 }}
+                  />
+                  {mfaError && <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 12 }}>{mfaError}</p>}
+                  <div id="phone-mfa-recaptcha" />
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button type="submit" disabled={mfaBusy} className="shell-task-add-btn" style={{ padding: "8px 16px" }}>
+                      {mfaBusy ? "Sending…" : "Send code"}
                     </button>
+                    <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
                   </div>
+                </form>
+              )}
+
+              {mfaMode === "phone" && mfaStep === "code" && (
+                <form onSubmit={handleConfirmPhoneCode} className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
+                  <p style={{ fontSize: 13, marginBottom: 12 }}>Enter the code we texted to {phoneNumber}.</p>
+                  <input
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value)}
+                    placeholder="123456"
+                    autoFocus
+                    className="shell-input"
+                    style={{ width: "100%", marginBottom: 12, textAlign: "center", letterSpacing: "0.2em" }}
+                  />
+                  {mfaError && <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 12 }}>{mfaError}</p>}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button type="submit" disabled={mfaBusy || mfaCode.length < 6} className="shell-task-add-btn" style={{ padding: "8px 16px" }}>
+                      {mfaBusy ? "Verifying…" : "Verify & enable"}
+                    </button>
+                    <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
+                  </div>
+                </form>
+              )}
+
+              {mfaMode === "totp" && mfaStep === "start" && (
+                <div className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
+                  {mfaBusy && <p style={{ fontSize: 13 }}>Generating secret…</p>}
+                  {mfaError && <p style={{ fontSize: 12, color: "#e5534b" }}>{mfaError}</p>}
+                  {mfaError && (
+                    <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
+                  )}
+                </div>
+              )}
+
+              {mfaMode === "totp" && mfaStep === "code" && totpSecret && (
+                <form onSubmit={handleConfirmTotp} className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
+                  <p style={{ fontSize: 13, marginBottom: 12 }}>Scan this with your authenticator app (Google Authenticator, Authy, 1Password, etc.), or enter the key manually.</p>
+                  {totpQrUri && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={qrCodeUrl(totpQrUri, 180)} alt="TOTP QR code" style={{ display: "block", marginBottom: 12, borderRadius: 8, background: "#fff", padding: 8 }} />
+                  )}
+                  <p style={{ fontSize: 11, color: "var(--s-text-3)", marginBottom: 12, wordBreak: "break-all" }}>
+                    Manual key: {totpSecret.secretKey}
+                  </p>
+                  <input
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value)}
+                    placeholder="123456"
+                    autoFocus
+                    className="shell-input"
+                    style={{ width: "100%", marginBottom: 12, textAlign: "center", letterSpacing: "0.2em" }}
+                  />
+                  {mfaError && <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 12 }}>{mfaError}</p>}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button type="submit" disabled={mfaBusy || mfaCode.length < 6} className="shell-task-add-btn" style={{ padding: "8px 16px" }}>
+                      {mfaBusy ? "Verifying…" : "Verify & enable"}
+                    </button>
+                    <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
+                  </div>
+                </form>
+              )}
+
+              <button onClick={() => signOut(auth)} className="shell-auth-btn" style={{ maxWidth: 200 }}>
+                Sign out
+              </button>
+            </>
+          )}
+
+          {prefTab === "voice" && (
+            <>
+              <p style={sectionLabelStyle()}>Input device (microphone)</p>
+              <select
+                value={prefs.micId || ""}
+                onChange={(e) => savePreference({ micId: e.target.value })}
+                className="shell-input"
+                style={{ width: "100%", marginBottom: 20 }}
+              >
+                <option value="">System default</option>
+                {micDevices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>{d.label || "Microphone"}</option>
                 ))}
-              </div>
-            )}
-            {mfaFactors.length === 0 && (
-              <p style={{ fontSize: 12, color: "var(--s-text-3)", marginBottom: 14 }}>Not turned on yet — every future sign-in will ask for a second factor once you add one.</p>
-            )}
+              </select>
 
-            {!mfaMode && (
-              <div style={{ display: "flex", gap: 8, marginBottom: 30 }}>
-                <button onClick={() => setMfaMode("phone")} style={{ padding: "8px 14px", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", color: "var(--s-text)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, cursor: "pointer" }}>
-                  Add phone number
+              <p style={sectionLabelStyle()}>Output device (camera)</p>
+              <select
+                value={prefs.camId || ""}
+                onChange={(e) => savePreference({ camId: e.target.value })}
+                className="shell-input"
+                style={{ width: "100%", marginBottom: 12 }}
+              >
+                <option value="">System default</option>
+                {camDevices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>{d.label || "Camera"}</option>
+                ))}
+              </select>
+              {deviceError && <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 12 }}>{deviceError}</p>}
+              <p style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>
+                Used as the default the next time you start a Meeting in any project. Device names only show up
+                once you've granted mic/camera permission at least once — that's your browser, not this app.
+              </p>
+            </>
+          )}
+
+          {prefTab === "appearance" && (
+            <>
+              <p style={sectionLabelStyle()}>Theme</p>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-amber)", borderRadius: 10, marginBottom: 24 }}>
+                <div style={{ width: 16, height: 16, borderRadius: "50%", background: "var(--s-bg-main)", border: "1px solid var(--s-border)" }} />
+                <div style={{ flex: 1, fontSize: 13.5 }}>Dark</div>
+                <span style={{ fontSize: 11, color: "var(--s-text-3)" }}>Only option for now</span>
+              </div>
+
+              <p style={sectionLabelStyle()}>Layout</p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Compact mode</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Tighter spacing in chat and on task cards.</div>
+                </div>
+                <Toggle checked={Boolean(prefs.compactMode)} onChange={(v) => savePreference({ compactMode: v })} />
+              </div>
+            </>
+          )}
+
+          {prefTab === "accessibility" && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Reduce motion</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Turns off hover/transition animations app-wide.</div>
+                </div>
+                <Toggle checked={Boolean(prefs.reduceMotion)} onChange={(v) => savePreference({ reduceMotion: v })} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Larger text</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Scales up the whole app slightly.</div>
+                </div>
+                <Toggle checked={Boolean(prefs.largerText)} onChange={(v) => savePreference({ largerText: v })} />
+              </div>
+            </>
+          )}
+
+          {prefTab === "danger" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 16, border: "1px solid rgba(229, 83, 75, 0.35)", borderRadius: 10 }}>
+              <div>
+                <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 13.5, marginBottom: 4 }}>Disable account</div>
+                <div style={{ fontSize: 12, color: "var(--s-text-2)", marginBottom: 8 }}>
+                  Signs you out and blocks access until you reactivate. Nothing is deleted.
+                </div>
+                <button
+                  onClick={handleDisableAccount}
+                  disabled={disablingAccount}
+                  style={{ padding: "8px 14px", background: "transparent", border: "1px solid var(--s-border)", color: "var(--s-text)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, cursor: disablingAccount ? "not-allowed" : "pointer" }}
+                >
+                  {disablingAccount ? "Disabling…" : "Disable account"}
                 </button>
-                <button onClick={() => { setMfaMode("totp"); handleStartTotp(); }} style={{ padding: "8px 14px", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", color: "var(--s-text)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, cursor: "pointer" }}>
-                  Add authenticator app
-                </button>
               </div>
-            )}
 
-            {mfaMode === "phone" && mfaStep === "start" && (
-              <form onSubmit={handleSendPhoneCode} className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
-                <p style={{ fontSize: 13, marginBottom: 12 }}>Enter your phone number (with country code, e.g. +1 555 555 0100).</p>
-                <input
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  placeholder="+1 555 555 0100"
-                  className="shell-input"
-                  style={{ width: "100%", marginBottom: 12 }}
-                />
-                {mfaError && <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 12 }}>{mfaError}</p>}
-                <div id="phone-mfa-recaptcha" />
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button type="submit" disabled={mfaBusy} className="shell-task-add-btn" style={{ padding: "8px 16px" }}>
-                    {mfaBusy ? "Sending…" : "Send code"}
-                  </button>
-                  <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
+              <div style={{ borderTop: "1px solid rgba(229, 83, 75, 0.25)", paddingTop: 14 }}>
+                <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 13.5, marginBottom: 4 }}>Delete account</div>
+                <div style={{ fontSize: 12, color: "var(--s-text-2)", marginBottom: 8 }}>
+                  Permanently deletes your profile and sign-in. This can't be undone. Type <strong>DELETE</strong> to confirm.
                 </div>
-              </form>
-            )}
-
-            {mfaMode === "phone" && mfaStep === "code" && (
-              <form onSubmit={handleConfirmPhoneCode} className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
-                <p style={{ fontSize: 13, marginBottom: 12 }}>Enter the code we texted to {phoneNumber}.</p>
-                <input
-                  value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value)}
-                  placeholder="123456"
-                  autoFocus
-                  className="shell-input"
-                  style={{ width: "100%", marginBottom: 12, textAlign: "center", letterSpacing: "0.2em" }}
-                />
-                {mfaError && <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 12 }}>{mfaError}</p>}
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button type="submit" disabled={mfaBusy || mfaCode.length < 6} className="shell-task-add-btn" style={{ padding: "8px 16px" }}>
-                    {mfaBusy ? "Verifying…" : "Verify & enable"}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <input
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    placeholder="Type DELETE"
+                    className="shell-input"
+                    style={{ width: 160 }}
+                  />
+                  <button
+                    onClick={handleDeleteAccount}
+                    disabled={deletingAccount || deleteConfirmText.trim().toUpperCase() !== "DELETE"}
+                    style={{
+                      padding: "8px 14px",
+                      background: "#e5534b",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 7,
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: deletingAccount || deleteConfirmText.trim().toUpperCase() !== "DELETE" ? "not-allowed" : "pointer",
+                      opacity: deleteConfirmText.trim().toUpperCase() !== "DELETE" ? 0.5 : 1,
+                    }}
+                  >
+                    {deletingAccount ? "Deleting…" : "Delete account"}
                   </button>
-                  <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
                 </div>
-              </form>
-            )}
-
-            {mfaMode === "totp" && mfaStep === "start" && (
-              <div className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
-                {mfaBusy && <p style={{ fontSize: 13 }}>Generating secret…</p>}
-                {mfaError && <p style={{ fontSize: 12, color: "#e5534b" }}>{mfaError}</p>}
-                {mfaError && (
-                  <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
-                )}
               </div>
-            )}
-
-            {mfaMode === "totp" && mfaStep === "code" && totpSecret && (
-              <form onSubmit={handleConfirmTotp} className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
-                <p style={{ fontSize: 13, marginBottom: 12 }}>Scan this with your authenticator app (Google Authenticator, Authy, 1Password, etc.), or enter the key manually.</p>
-                {totpQrUri && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={qrCodeUrl(totpQrUri, 180)} alt="TOTP QR code" style={{ display: "block", marginBottom: 12, borderRadius: 8, background: "#fff", padding: 8 }} />
-                )}
-                <p style={{ fontSize: 11, color: "var(--s-text-3)", marginBottom: 12, wordBreak: "break-all" }}>
-                  Manual key: {totpSecret.secretKey}
-                </p>
-                <input
-                  value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value)}
-                  placeholder="123456"
-                  autoFocus
-                  className="shell-input"
-                  style={{ width: "100%", marginBottom: 12, textAlign: "center", letterSpacing: "0.2em" }}
-                />
-                {mfaError && <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 12 }}>{mfaError}</p>}
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button type="submit" disabled={mfaBusy || mfaCode.length < 6} className="shell-task-add-btn" style={{ padding: "8px 16px" }}>
-                    {mfaBusy ? "Verifying…" : "Verify & enable"}
-                  </button>
-                  <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
-                </div>
-              </form>
-            )}
-
-            <button onClick={() => signOut(auth)} className="shell-auth-btn" style={{ maxWidth: 200 }}>
-              Sign out
-            </button>
-          </>
-        )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

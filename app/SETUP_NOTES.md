@@ -98,7 +98,7 @@ same with GitHub also grants repo access. That's implemented in
 (`saveGoogleCredential` / `saveGithubCredential`, called right after
 `signInWithPopup`/`linkWithPopup` resolves).
 
-There's still one real setup step, and one real limitation:
+There's still one real setup step:
 
 - **Google Cloud setup (one-time):** the `drive.file` scope has to be
   enabled on the Google Cloud project behind your Firebase project (find it
@@ -110,16 +110,58 @@ There's still one real setup step, and one real limitation:
   users**, or the whole sign-in will be blocked. GitHub needs nothing
   extra — whatever OAuth App you already set up for "Continue with GitHub"
   in Firebase console just gets asked for the `repo` scope now too.
-- **Drive tokens expire in ~1hr, with no silent refresh.** Firebase's
-  client SDK doesn't expose a refresh token for this flow, so once a
-  Drive-backed action fails with "connection expired," the fix is
-  re-signing in with Google (or clicking "Refresh Drive access" on
-  `/account`) — there's no background renewal. GitHub tokens don't expire,
-  so that one's set-and-forget.
 
 Nothing breaks if you skip the Google Cloud step — the Drive-specific
 buttons/toggles just won't do anything useful until it's done (Drive API
 calls will fail with a permission error, surfaced in the UI).
+
+### Drive/Calendar tokens now refresh themselves — three more setup steps
+
+The Google popup Firebase's own client SDK does never hands back a refresh
+token, so a Drive/Calendar connection made *only* that way is only good for
+about an hour, and previously just failed with "permission-denied" once it
+lapsed (with no way to silently recover — this is the bug behind the
+"Refreshing Google failed" error). That's fixed now with a real
+refresh-token flow, but it needs three things you'll have to set up by hand
+— I don't have access to your Google Cloud console, Vercel project, or
+Firebase console to do this myself:
+
+1. **A second, separate OAuth 2.0 Client ID.** Firebase's built-in Google
+   sign-in doesn't let you request `access_type=offline` yourself, so this
+   uses Google Identity Services directly, alongside (not instead of)
+   Firebase Auth. In
+   [console.cloud.google.com](https://console.cloud.google.com/) → **APIs &
+   Services → Credentials** (same GCP project as `blueprint-drs`) → **Create
+   credentials → OAuth client ID → Web application**. Under **Authorized
+   JavaScript origins**, add `https://blueprint-app-dhruv-raj-singh-s-projects.vercel.app`
+   (and any custom domain). No redirect URI is needed — the code flow this
+   uses runs in popup mode. Copy the **Client ID** and **Client secret**.
+2. **A Firebase service account key**, so the server can verify who's
+   asking and store/read the refresh token safely (bypassing Firestore
+   rules entirely, so this token is never exposed to any client-side rule).
+   Firebase console → **Project settings → Service accounts → Generate new
+   private key**. This downloads a JSON file — you'll paste its *entire
+   contents* as a single-line env var.
+3. **Three environment variables in Vercel** (Project Settings →
+   Environment Variables):
+   - `NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID` — the Client ID from step 1 (safe
+     to expose to the browser — it's public by design).
+   - `GOOGLE_OAUTH_CLIENT_SECRET` — the Client secret from step 1
+     (server-only, do not prefix with `NEXT_PUBLIC_`).
+   - `FIREBASE_SERVICE_ACCOUNT_KEY` — the full JSON from step 2, minified to
+     one line (e.g. `cat key.json | jq -c .` or just strip the newlines).
+4. **One new npm dependency**: `firebase-admin`. This repo's `package.json`
+   wasn't in a folder I had write access to this session, so I couldn't add
+   it myself — run `npm install firebase-admin` in the actual project
+   before deploying (`lib/firebaseAdmin.js` imports it).
+
+Until all four are in place, Drive/Calendar access silently falls back to
+the old behavior (Firebase's ~1hr token, with "connection expired" once it
+lapses) — nothing breaks, the new code just no-ops. Once they're set,
+`connectGoogleOffline` in `lib/integrations.js` runs automatically right
+after every Google sign-in (and also whenever "Connect"/"Refresh Drive
+access" is clicked on `/account`), and `ensureFreshGoogleToken` silently
+renews the token from then on — no more popups, no more "refresh" step.
 
 ## Shared project Calendar
 
@@ -229,7 +271,15 @@ match /profiles/{uid} {
 ```
 
 Without this rule, saving the Drive/GitHub token after sign-in (or from
-`/account`) will fail with `permission-denied`.
+`/account`) will fail with `permission-denied`. This is almost certainly why
+you're seeing (or saw) file uploads and Google/GitHub connects fail —
+apply the rule above if you haven't yet.
+
+Note: the newer refresh-token storage (`profiles/{uid}/private/google`, see
+the "Drive/Calendar tokens now refresh themselves" section above) does
+**not** need this rule or any client-facing rule at all — only the server
+(via the Firebase Admin SDK in `lib/firebaseAdmin.js`) ever touches that
+document, and the Admin SDK bypasses Firestore rules entirely.
 
 ## Online/offline presence
 
@@ -285,6 +335,62 @@ things to check if it doesn't work out of the box:
   session is old. The UI surfaces this as a message pointing back to
   "Connected accounts" above — reconnect a provider there (which
   re-authenticates you), then try enrolling again.
+
+## Delete project
+
+Project Settings → Danger zone now has "Delete project" next to "Leave
+project," visible only to the project owner in the UI. It removes every
+doc in the project's subcollections (tasks, messages, events, whiteboard,
+retro) before deleting the project doc itself — Firestore doesn't
+cascade-delete subcollections automatically, so this does it manually,
+client-side.
+
+Worth knowing: the existing Firestore rule (`allow update, delete: if
+request.auth.uid in resource.data.memberIds`) technically lets *any*
+member delete a project via a direct API call, not just the owner — the
+UI just hides the button from non-owners. If you want that actually locked
+to the owner, tighten the rule to
+`request.auth.uid == resource.data.ownerId` for the delete case
+specifically.
+
+## Message translation
+
+Every text chat message now has a small "Translate" link under it
+(`app/api/translate/route.js`, called from the chat message list in
+`app/project/[id]/page.js`). It's on-demand and per-viewer — nothing gets
+stored or broadcast, it just translates and shows the result inline for
+whoever clicked it, targeting their browser's language.
+
+Uses **`@vitalets/google-translate-api`** (`npm install
+@vitalets/google-translate-api` — another dependency I couldn't add myself
+since this repo's `package.json` isn't in a folder I had write access to).
+No API key, no GCP billing, no setup step at all — it works the moment the
+package is installed. The trade-off, straight from that library's own
+README: it's an unofficial library that calls the same free endpoint
+translate.google.com itself uses, not Google's paid, officially-supported
+Cloud Translation API. Google rate-limits it per IP address (a 429
+"TooManyRequestsError"), and on a serverless host like Vercel that IP is
+shared across other tenants, so it's more likely to get rate-limited than
+if it were running on a dedicated server. If translations start failing
+under real usage, that's almost certainly why — the library supports
+routing requests through a proxy to work around it (see its README's
+"Limits" section), or you can swap to the official paid Cloud Translation
+API instead for guaranteed uptime (needs a `GOOGLE_TRANSLATE_API_KEY` env
+var and a small change to `app/api/translate/route.js` — ask me if you
+want that swapped back in).
+
+## Focus modes
+
+The topbar has a status/focus picker next to the avatar (`app/components/
+FocusMode.js`) — Available, Focusing, In a meeting, Away — Slack-style.
+Saved to `profiles/{uid}.focusMode`, shown next to your name in a
+project's Overview → Team panel too (skipped for "Available", the default,
+to avoid clutter — only non-default statuses show a badge). Not yet wired
+into every other place a teammate's name appears (e.g. chat messages) —
+extending it there would just mean reading the same `focusModeInfo()`
+helper (`app/components/FocusMode.js`) off `memberProfiles[uid].focusMode`.
+It's purely informational for now, like Slack's status — doesn't mute
+notifications or change behavior elsewhere while "Focusing."
 
 ## Fonts
 

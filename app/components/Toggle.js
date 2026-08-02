@@ -1,6 +1,6 @@
 "use client";
 
-/** Small on/off switch matching the app's dark/amber theme. */
+/** Small on/off switch matching the app's dark, monotone theme. */
 export default function Toggle({ checked, onChange, disabled }) {
   return (
     <button

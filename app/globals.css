@@ -14,15 +14,21 @@
   font-display: swap;
 }
 
+/* Monotone neutral palette — one grayscale ramp, no brand color. The only
+   non-gray hues left anywhere in the app are semantic: red for destructive
+   actions/errors, green for online/success. Everything else (buttons,
+   active states, badges, focus rings) is gray-on-gray, differentiated by
+   contrast and weight rather than color — closer to Notion/Linear than the
+   amber-accented look this had before. */
 :root {
-  --navy: #0b2340;
-  --navy-2: #0f2e52;
-  --line: #3f6d95;
-  --line-bright: #6fa8d8;
-  --ink: #eaf2fa;
-  --ink-dim: #8ba9c4;
-  --amber: #e0a339;
-  --amber-ink: #241703;
+  --navy: #191a1d;
+  --navy-2: #212226;
+  --line: #34353b;
+  --line-bright: #4a4b52;
+  --ink: #ececed;
+  --ink-dim: #97989f;
+  --amber: #e5534b;
+  --amber-ink: #ffffff;
 }
 
 * {
@@ -45,28 +51,31 @@ body {
 }
 
 :focus-visible {
-  outline: 2px solid var(--amber);
-  outline-offset: 3px;
+  outline: 2px solid var(--ink-dim);
+  outline-offset: 2px;
 }
 
 .notice {
   font-family: "DM Sans", sans-serif;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--amber);
-  border: 1px dashed var(--amber);
+  color: #ff8981;
+  background: rgba(229, 83, 75, 0.08);
+  border: 1px solid rgba(229, 83, 75, 0.35);
+  border-radius: 8px;
   padding: 12px 14px;
   margin-bottom: 28px;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
 }
 
 .chip {
   font-family: "DM Sans", sans-serif;
   font-weight: 600;
   font-size: 11px;
-  color: var(--amber);
+  color: var(--ink-dim);
   border: 1px solid var(--line);
   padding: 3px 8px;
+  border-radius: 6px;
   display: inline-block;
 }
 
@@ -79,26 +88,32 @@ body {
 /* ================= APP SHELL (matches the design mockup) ================= */
 
 .shell {
-  --s-bg-side: #1f2024;
-  --s-bg-main: #26272c;
-  --s-bg-elevated: #2f3036;
-  --s-bg-hover: #2a2b30;
-  --s-border: #35363c;
-  --s-text: #e7e8ea;
-  --s-text-2: #9a9ba1;
-  --s-text-3: #6f7078;
-  --s-amber: #e0a339;
-  --s-amber-2: #f0c169;
-  --s-amber-ink: #241703;
+  /* Neutral grayscale ramp — background/surface/border/text, nothing else.
+     --s-amber is kept as a variable NAME for backward compatibility (it's
+     referenced in ~150 places across the app as the "primary" color) but
+     now resolves to a light neutral instead of an actual amber — every
+     primary button/badge/active-state that used it becomes gray-on-gray
+     automatically. --s-amber-2 is set equal to --s-amber so the handful of
+     two-stop gradients that reference both collapse to a flat fill. */
+  --s-bg-side: #1a1b1e;
+  --s-bg-main: #202124;
+  --s-bg-elevated: #2a2b2f;
+  --s-bg-hover: #26272b;
+  --s-border: #333338;
+  --s-text: #ececed;
+  --s-text-2: #97989f;
+  --s-text-3: #6c6d74;
+  --s-amber: #e7e8ea;
+  --s-amber-2: #e7e8ea;
+  --s-amber-ink: #17181a;
   --s-green: #5fbf8f;
   --s-radius-sm: 8px;
-  --s-radius-md: 12px;
-  --s-radius-lg: 18px;
-  --s-glow-amber: 0 0 0 1px rgba(224, 163, 57, 0.35), 0 4px 24px rgba(224, 163, 57, 0.22);
-  --s-glow-soft: 0 8px 30px rgba(0, 0, 0, 0.35);
+  --s-radius-md: 10px;
+  --s-radius-lg: 14px;
+  --s-glow-amber: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --s-glow-soft: 0 6px 20px rgba(0, 0, 0, 0.3);
 
-  background: radial-gradient(1200px 600px at 12% -10%, rgba(224, 163, 57, 0.07), transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, rgba(95, 191, 143, 0.05), transparent 55%), var(--s-bg-main);
+  background: var(--s-bg-main);
   color: var(--s-text);
   font-family: "DM Sans", sans-serif;
   font-size: 15px;
@@ -109,13 +124,13 @@ body {
 }
 
 .shell-topbar {
-  height: 60px;
+  height: 56px;
   flex: none;
-  background: linear-gradient(90deg, var(--s-bg-side) 0%, var(--s-bg-main) 160%);
+  background: var(--s-bg-side);
   border-bottom: 1px solid var(--s-border);
   display: flex;
   align-items: center;
-  padding: 0 22px;
+  padding: 0 20px;
 }
 .shell-topbar-right {
   margin-left: auto;
@@ -243,8 +258,8 @@ body {
 }
 
 .shell-sidebar {
-  width: 268px;
-  background: linear-gradient(180deg, var(--s-bg-side) 0%, var(--s-bg-main) 220%);
+  width: 260px;
+  background: var(--s-bg-side);
   flex: none;
   display: flex;
   flex-direction: column;
@@ -266,7 +281,7 @@ body {
   width: 34px;
   height: 34px;
   border-radius: var(--s-radius-sm);
-  background: linear-gradient(135deg, var(--s-amber-2), var(--s-amber));
+  background: var(--s-amber);
   color: var(--s-amber-ink);
   display: flex;
   align-items: center;
@@ -275,7 +290,6 @@ body {
   font-weight: 700;
   font-size: 13px;
   flex: none;
-  box-shadow: 0 2px 12px rgba(224, 163, 57, 0.25);
 }
 .shell-switcher-name {
   font-family: "DM Sans", sans-serif;
@@ -372,17 +386,16 @@ body {
   top: 10px;
   bottom: 10px;
   width: 3px;
-  background: linear-gradient(180deg, var(--s-amber-2), var(--s-amber));
+  background: var(--s-text);
   border-radius: 2px;
-  box-shadow: 0 0 10px rgba(224, 163, 57, 0.55);
 }
 .shell-fill-pill {
   margin-left: auto;
   font-family: "DM Sans", sans-serif;
   font-weight: 600;
   font-size: 11px;
-  color: var(--s-amber);
-  background: rgba(224, 163, 57, 0.12);
+  color: var(--s-text-2);
+  background: rgba(255, 255, 255, 0.08);
   padding: 2px 8px;
   border-radius: 9px;
 }
@@ -501,17 +514,17 @@ body {
 }
 .shell-task-card {
   border: 1px solid var(--s-border);
-  border-left: 4px solid var(--role-color, var(--s-amber));
-  background: linear-gradient(160deg, var(--s-bg-side) 0%, var(--s-bg-elevated) 220%);
+  border-left: 3px solid var(--role-color, var(--s-text-3));
+  background: var(--s-bg-side);
   border-radius: var(--s-radius-md);
   padding: 12px 12px 12px 14px;
   margin-bottom: 10px;
   font-size: 13.5px;
   cursor: grab;
-  transition: box-shadow 0.15s ease, transform 0.1s ease;
+  transition: border-color 0.15s ease, transform 0.1s ease;
 }
 .shell-task-card:hover {
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+  border-color: var(--s-text-3);
   transform: translateY(-1px);
 }
 .shell-task-role {
@@ -519,7 +532,7 @@ body {
   font-weight: 700;
   font-size: 10px;
   color: var(--role-color, var(--s-text-3));
-  background: rgba(224, 163, 57, 0.14);
+  background: rgba(255, 255, 255, 0.06);
   padding: 3px 7px;
   border-radius: 7px;
   display: inline-block;
@@ -537,11 +550,11 @@ body {
   background: var(--s-bg-elevated);
 }
 .shell-task-deadline.soon {
-  color: #b8860b;
-  background: rgba(212, 163, 79, 0.16);
+  color: var(--s-text);
+  background: rgba(255, 255, 255, 0.1);
 }
 .shell-task-deadline.overdue {
-  color: #e5534b;
+  color: #ff8981;
   background: rgba(229, 83, 75, 0.14);
 }
 .shell-add-task {
@@ -562,7 +575,7 @@ body {
 }
 .shell-task-add-btn {
   padding: 0 16px;
-  background: linear-gradient(135deg, var(--s-amber-2), var(--s-amber));
+  background: var(--s-amber);
   color: var(--s-amber-ink);
   border: none;
   border-radius: var(--s-radius-md);
@@ -570,11 +583,10 @@ body {
   font-weight: 700;
   font-size: 13px;
   cursor: pointer;
-  box-shadow: 0 2px 14px rgba(224, 163, 57, 0.25);
-  transition: box-shadow 0.15s ease, transform 0.1s ease;
+  transition: opacity 0.15s ease, transform 0.1s ease;
 }
 .shell-task-add-btn:hover {
-  box-shadow: 0 2px 20px rgba(224, 163, 57, 0.4);
+  opacity: 0.85;
   transform: translateY(-1px);
 }
 
@@ -644,13 +656,12 @@ body {
 /* chat */
 .shell-chat-panel {
   border: 1px solid var(--s-border);
-  background: linear-gradient(165deg, var(--s-bg-side) 0%, var(--s-bg-main) 160%);
+  background: var(--s-bg-side);
   height: 420px;
   display: flex;
   flex-direction: column;
   border-radius: var(--s-radius-lg);
   overflow: hidden;
-  box-shadow: var(--s-glow-soft);
 }
 .shell-msgs {
   flex: 1;
@@ -660,9 +671,40 @@ body {
   flex-direction: column;
   gap: 14px;
 }
+/* Appearance/Accessibility preferences, applied body-wide by TopNav.js */
+body.reduce-motion,
+body.reduce-motion * {
+  transition: none !important;
+  animation: none !important;
+}
+body.compact-mode .shell-view {
+  padding: 18px;
+}
+body.compact-mode .shell-msgs {
+  gap: 8px;
+}
+body.compact-mode .shell-task-card {
+  padding: 8px 8px 8px 10px;
+  margin-bottom: 6px;
+}
+
 .shell-msg {
   display: flex;
   gap: 11px;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+.shell-msg.mentioned {
+  background: rgba(255, 255, 255, 0.05);
+  margin: -6px -8px;
+  padding: 6px 8px;
+}
+.shell-mention {
+  color: var(--s-text);
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 0 3px;
+  font-weight: 600;
 }
 .shell-msg-body b {
   font-size: 14px;
@@ -690,7 +732,7 @@ body {
 }
 .shell-composer button {
   padding: 0 22px;
-  background: linear-gradient(135deg, var(--s-amber-2), var(--s-amber));
+  background: var(--s-amber);
   color: var(--s-amber-ink);
   border: none;
   font-family: "DM Sans", sans-serif;
@@ -876,8 +918,8 @@ button.ghost:hover {
   color: var(--s-text-2);
 }
 .shell-reaction-chip.mine {
-  border-color: var(--s-amber);
-  background: rgba(212, 163, 79, 0.12);
+  border-color: var(--s-text-2);
+  background: rgba(255, 255, 255, 0.08);
 }
 .shell-reaction-add {
   font-family: "DM Sans", sans-serif;
@@ -963,7 +1005,7 @@ button.ghost:hover {
   left: 0;
   top: 0;
   bottom: 0;
-  background: rgba(224, 163, 57, 0.16);
+  background: rgba(255, 255, 255, 0.1);
   transition: width 0.2s ease;
 }
 .shell-poll-option-label,
@@ -1014,11 +1056,10 @@ button.ghost:hover {
 
 /* card + auth buttons reused on sign-in and create-project screens */
 .shell-card {
-  background: linear-gradient(165deg, var(--s-bg-side) 0%, var(--s-bg-main) 130%);
+  background: var(--s-bg-side);
   border: 1px solid var(--s-border);
   border-radius: var(--s-radius-lg);
   padding: 40px;
-  box-shadow: var(--s-glow-soft);
 }
 .shell-auth-btn {
   display: flex;
@@ -1035,27 +1076,24 @@ button.ghost:hover {
   border-radius: var(--s-radius-md);
   margin-bottom: 10px;
   cursor: pointer;
-  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+  transition: background 0.12s ease, opacity 0.12s ease;
 }
 .shell-auth-btn:hover {
   background: var(--s-bg-hover);
-  transform: translateY(-1px);
 }
 .shell-auth-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  transform: none;
 }
 .shell-auth-btn.primary {
-  background: linear-gradient(135deg, var(--s-amber-2), var(--s-amber));
+  background: var(--s-amber);
   color: var(--s-amber-ink);
   border: none;
   font-weight: 700;
   justify-content: center;
-  box-shadow: var(--s-glow-amber);
 }
 .shell-auth-btn.primary:hover {
-  opacity: 0.94;
+  opacity: 0.88;
 }
 
 /* on/off switch (project creation: Drive folder / GitHub repo, etc.) */
@@ -1073,9 +1111,8 @@ button.ghost:hover {
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 .toggle.on {
-  background: linear-gradient(135deg, var(--s-amber-2, #f0c169), var(--s-amber, #e0a339));
-  border-color: var(--s-amber, #e0a339);
-  box-shadow: 0 0 10px rgba(224, 163, 57, 0.4);
+  background: var(--s-amber, #e7e8ea);
+  border-color: var(--s-amber, #e7e8ea);
 }
 .toggle:disabled {
   opacity: 0.45;
@@ -1162,6 +1199,6 @@ button.ghost:hover {
 .ac-sub {
   font-size: 11px;
   font-weight: 700;
-  color: var(--s-amber, #e0a339);
+  color: var(--s-text-2, #97989f);
   flex: none;
 }

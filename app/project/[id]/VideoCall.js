@@ -13,6 +13,7 @@ import {
   getDocs,
 } from "firebase/firestore";
 import { db } from "../../../lib/firebase";
+import { IconSparkle } from "../../components/icons";
 
 const ICE_SERVERS = {
   iceServers: [
@@ -37,15 +38,18 @@ function ctrlBtnStyle(danger) {
   };
 }
 
-export default function VideoCall({ projectId, onOpenActivities }) {
+export default function VideoCall({ projectId, onOpenActivities, startSignal, preferredMicId, preferredCamId }) {
   const [inCall, setInCall] = useState(false);
   const [status, setStatus] = useState("Not connected");
   const [micOff, setMicOff] = useState(false);
   const [camOff, setCamOff] = useState(false);
   const [micDevices, setMicDevices] = useState([]);
   const [camDevices, setCamDevices] = useState([]);
-  const [selectedMicId, setSelectedMicId] = useState("");
-  const [selectedCamId, setSelectedCamId] = useState("");
+  // Seeded from the "Voice & Video" preferences page (/account) if set —
+  // still just a starting point, the in-call device picker can always
+  // override it for this session.
+  const [selectedMicId, setSelectedMicId] = useState(preferredMicId || "");
+  const [selectedCamId, setSelectedCamId] = useState(preferredCamId || "");
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
   const [screenSharing, setScreenSharing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -338,6 +342,14 @@ export default function VideoCall({ projectId, onOpenActivities }) {
     }
   }, []);
 
+  // Lets a parent (the chat composer's "+" menu) start a meeting from
+  // outside this component — bump startSignal (e.g. Date.now()) to trigger
+  // it, same as clicking "Start meeting" here directly.
+  useEffect(() => {
+    if (startSignal) startCall();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startSignal]);
+
   return (
     <div ref={callFrameRef} style={{ border: "1px solid var(--s-border)", background: "var(--s-bg-side)", marginBottom: 20 }}>
       <div
@@ -366,7 +378,7 @@ export default function VideoCall({ projectId, onOpenActivities }) {
               cursor: "pointer",
             }}
           >
-            Start call
+            Start meeting
           </button>
         ) : (
           <button
@@ -486,7 +498,7 @@ export default function VideoCall({ projectId, onOpenActivities }) {
               title={screenSharing ? "Stop screen share" : "Share your screen"}
             >
               {screenSharing ? (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e0a339" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--s-green)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="2" y="4" width="20" height="14" rx="2" />
                   <line x1="8" y1="21" x2="16" y2="21" />
                   <line x1="12" y1="18" x2="12" y2="21" />
@@ -502,7 +514,7 @@ export default function VideoCall({ projectId, onOpenActivities }) {
 
             {onOpenActivities && (
               <button onClick={onOpenActivities} style={ctrlBtnStyle(false)} aria-label="Open Activities" title="Whiteboard & retro board">
-                <span style={{ fontSize: 16 }}>✦</span>
+                <IconSparkle size={16} />
               </button>
             )}
 
@@ -518,7 +530,7 @@ export default function VideoCall({ projectId, onOpenActivities }) {
               )}
             </button>
 
-            <button onClick={endCall} style={ctrlBtnStyle(true)} aria-label="Leave call">
+            <button onClick={endCall} style={ctrlBtnStyle(true)} aria-label="Leave meeting">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 9c-3 0-5.6.9-7.7 2.4a1.3 1.3 0 0 0-.2 1.9l1.8 2.2c.4.5 1.1.6 1.6.3.9-.6 1.9-1 3-1.3l.4-1.8a1 1 0 0 1 1-.8h.2a1 1 0 0 1 1 .8l.4 1.8c1.1.3 2.1.7 3 1.3.5.3 1.2.2 1.6-.3l1.8-2.2a1.3 1.3 0 0 0-.2-1.9C17.6 9.9 15 9 12 9z" />
               </svg>

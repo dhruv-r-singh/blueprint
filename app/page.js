@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
-import { collection, query, where, getDocs, doc, setDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db, googleProvider, githubProvider, linkedinProvider, firebaseConfigured } from "../lib/firebase";
 import { describeAuthError } from "../lib/authErrors";
 import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePublicIdentity } from "../lib/integrations";
@@ -28,6 +28,8 @@ export default function Page() {
 
   // Once signed in, skip the dashboard entirely — go straight into the
   // most recent project, or straight into project creation if there isn't one yet.
+  // First-time users (no projects yet AND never finished onboarding) go to
+  // /onboarding instead, exactly once, before ever seeing /create.
   //
   // Deliberately NOT using orderBy() + limit() here: that combined with the
   // where("memberIds", ...) filter requires a Firestore composite index. If
@@ -46,6 +48,11 @@ export default function Page() {
           const projects = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
           projects.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
           router.replace(`/project/${projects[0].id}`);
+          return;
+        }
+        const profileSnap = await getDoc(doc(db, "profiles", user.uid));
+        if (!profileSnap.exists() || !profileSnap.data()?.onboarded) {
+          router.replace("/onboarding");
         } else {
           router.replace("/create");
         }
@@ -117,34 +124,23 @@ export default function Page() {
     );
   }
 
+  // Signed-in visitors here are mid-redirect (see the effect above) — show
+  // nothing rather than a "Taking you in…" flash.
+  if (user) return <div className="shell" />;
+
   return (
     <div className="shell">
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <div className="shell-card" style={{ width: "100%", maxWidth: 420 }}>
-          {user ? (
-            <>
-              <div className="brand-wordmark" style={{ fontSize: 30, marginBottom: 6 }}>
-                Blueprint
-              </div>
-              <div style={{ color: "var(--s-text-2)", fontSize: 14, marginBottom: 24 }}>
-                Taking you in…
-              </div>
-              {error && <p className="notice">{error}</p>}
-              <button className="shell-auth-btn" onClick={handleSignOut}>
-                Sign out
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="brand-wordmark" style={{ fontSize: 30, marginBottom: 6 }}>
-                Blueprint
-              </div>
-              <div style={{ color: "var(--s-text-2)", fontSize: 14, marginBottom: 26 }}>
-                Find the team for what you&rsquo;re building.
-              </div>
+          <div className="brand-wordmark" style={{ fontSize: 30, marginBottom: 6 }}>
+            Blueprint
+          </div>
+          <div style={{ color: "var(--s-text-2)", fontSize: 14, marginBottom: 26 }}>
+            Find the team for what you&rsquo;re building.
+          </div>
 
-              {!firebaseConfigured && <p className="notice">Auth isn&rsquo;t configured yet.</p>}
-              {error && <p className="notice">{error}</p>}
+          {!firebaseConfigured && <p className="notice">Auth isn&rsquo;t configured yet.</p>}
+          {error && <p className="notice">{error}</p>}
 
               <button
                 className="shell-auth-btn"
@@ -181,8 +177,6 @@ export default function Page() {
                 </svg>
                 {pending === "linkedin" ? "Signing in…" : "Continue with LinkedIn"}
               </button>
-            </>
-          )}
         </div>
       </div>
     </div>

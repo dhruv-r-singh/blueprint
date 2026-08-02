@@ -168,7 +168,7 @@ export default function CreateProjectPage() {
                 <div className="toggle-row-hint">
                   {driveConnected
                     ? `Named "${name.trim() || "your project"}"`
-                    : <>Connect Drive in <Link href="/account" style={{ color: "var(--s-amber)" }}>Account settings</Link> first</>}
+                    : <>Connect Drive in <Link href="/account" style={{ color: "var(--s-amber)" }}>Preferences</Link> first</>}
                 </div>
               </div>
               <Toggle checked={makeDriveFolder && driveConnected} onChange={setMakeDriveFolder} disabled={!driveConnected} />
@@ -180,7 +180,7 @@ export default function CreateProjectPage() {
                 <div className="toggle-row-hint">
                   {githubConnected
                     ? `Private repo named "${name.trim() ? slugifyRepoName(name) : "your-project"}"`
-                    : <>Connect GitHub in <Link href="/account" style={{ color: "var(--s-amber)" }}>Account settings</Link> first</>}
+                    : <>Connect GitHub in <Link href="/account" style={{ color: "var(--s-amber)" }}>Preferences</Link> first</>}
                 </div>
               </div>
               <Toggle checked={makeGithubRepo && githubConnected} onChange={setMakeGithubRepo} disabled={!githubConnected} />

@@ -11,6 +11,7 @@ import { useAuthGate } from "../../lib/useAuthGate";
 import Autocomplete from "../components/Autocomplete";
 import AvatarEditor from "../components/AvatarEditor";
 import TopNav from "../components/TopNav";
+import { IconPencil, IconStar } from "../components/icons";
 
 export default function ProfilePage() {
   const [user, setUser] = useState(undefined);
@@ -193,7 +194,7 @@ export default function ProfilePage() {
                   }}
                   title="Change photo"
                 >
-                  ✎
+                  <IconPencil size={11} />
                 </span>
                 <input
                   type="file"
@@ -377,7 +378,11 @@ export default function ProfilePage() {
                     >
                       <span className="shell-attachment-badge github">GitHub</span>
                       <span className="shell-attachment-title">{r.name}</span>
-                      {r.stargazers_count > 0 && <span className="shell-attachment-meta">★ {r.stargazers_count}</span>}
+                      {r.stargazers_count > 0 && (
+                        <span className="shell-attachment-meta" style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                          <IconStar size={11} filled /> {r.stargazers_count}
+                        </span>
+                      )}
                     </a>
                   ))}
                 </div>

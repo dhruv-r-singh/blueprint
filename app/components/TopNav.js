@@ -3,15 +3,17 @@
 // Single consolidated nav used on every signed-in page, replacing the
 // scattered per-page back-links/settings-gear/profile-chip combos that used
 // to differ from page to page. One hamburger menu, same options everywhere:
-// Home, Profile, Account settings, Sign out — plus whatever single
+// Home, Profile, Preferences, Sign out — plus whatever single
 // page-specific action (if any) is passed in via `extraLink`.
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
-import { auth } from "../../lib/firebase";
+import { doc, onSnapshot } from "firebase/firestore";
+import { auth, db } from "../../lib/firebase";
 import { startPresenceHeartbeat } from "../../lib/presence";
+import FocusMode from "./FocusMode";
 
 export default function TopNav({ user, extraLink }) {
   const [open, setOpen] = useState(false);
@@ -34,6 +36,29 @@ export default function TopNav({ user, extraLink }) {
     return startPresenceHeartbeat(user.uid);
   }, [user?.uid]);
 
+  // TopNav mounts on every signed-in page, so it's also the one place that
+  // can apply Appearance/Accessibility preferences (set on /account's
+  // "Voice & Video" / "Appearance" / "Accessibility" subpages) app-wide,
+  // without every single page needing to read and apply them itself.
+  useEffect(() => {
+    if (!user?.uid) return;
+    const unsub = onSnapshot(doc(db, "profiles", user.uid), (snap) => {
+      const prefs = snap.data()?.preferences || {};
+      document.body.classList.toggle("reduce-motion", Boolean(prefs.reduceMotion));
+      document.body.classList.toggle("compact-mode", Boolean(prefs.compactMode));
+      // "zoom" isn't standard CSS, but works in Chromium/Electron (this
+      // app's primary desktop target) and just no-ops elsewhere — a real
+      // rem-based rescale would need every fixed px font-size in the app
+      // reworked, which is out of scope for a preference toggle.
+      document.body.style.zoom = prefs.largerText ? "1.12" : "";
+    });
+    return () => {
+      unsub();
+      document.body.classList.remove("reduce-motion", "compact-mode");
+      document.body.style.zoom = "";
+    };
+  }, [user?.uid]);
+
   async function handleSignOut() {
     setOpen(false);
     await signOut(auth);
@@ -42,10 +67,6 @@ export default function TopNav({ user, extraLink }) {
 
   return (
     <div className="shell-topbar">
-      <Link href="/" className="brand-wordmark" style={{ fontSize: 18, textDecoration: "none" }}>
-        Blueprint
-      </Link>
-
       <div className="shell-topbar-right" style={{ marginLeft: "auto", position: "relative" }} ref={ref}>
         <button
           type="button"
@@ -58,6 +79,8 @@ export default function TopNav({ user, extraLink }) {
           <span />
           <span />
         </button>
+
+        {user && <FocusMode user={user} />}
 
         {user && (
           <span className="shell-avatar" style={{ marginLeft: 10 }} onClick={() => setOpen((v) => !v)}>
@@ -75,7 +98,7 @@ export default function TopNav({ user, extraLink }) {
               Profile
             </Link>
             <Link href="/account" className="shell-nav-menu-item" onClick={() => setOpen(false)}>
-              Account settings
+              Preferences
             </Link>
             {extraLink && (
               <Link href={extraLink.href} className="shell-nav-menu-item" onClick={() => setOpen(false)}>
