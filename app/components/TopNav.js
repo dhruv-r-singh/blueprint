@@ -7,6 +7,7 @@
 // page-specific action (if any) is passed in via `extraLink`.
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { signOut } from "firebase/auth";
@@ -36,16 +37,41 @@ export default function TopNav({ user, extraLink }) {
   const open = openMenu === "hamburger";
   const [avatarUrl, setAvatarUrl] = useState("");
   const ref = useRef(null);
+  // The dropdown itself is rendered through a portal straight onto
+  // <body> (see the `open &&` block below) instead of as a normal DOM
+  // child here — after three rounds of chasing an invisible click-blocker
+  // (a guided-tour overlay, z-index/stacking-context issues, etc.) that
+  // kept the account menu unclickable no matter what CSS fix went in, a
+  // portal sidesteps the whole category of bug: it paints as the very
+  // last element in <body> with an extreme z-index, so nothing rendered
+  // anywhere else in the app can ever sit on top of it or intercept its
+  // clicks, regardless of what overlay/stacking context bug turns up next.
+  const menuRef = useRef(null);
+  const [menuRect, setMenuRect] = useState(null);
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
     function onClickOutside(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpenMenu(null);
+      const inTrigger = ref.current && ref.current.contains(e.target);
+      const inMenu = menuRef.current && menuRef.current.contains(e.target);
+      if (!inTrigger && !inMenu) setOpenMenu(null);
     }
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
+
+  /** Measures the account button's real on-screen position right as the menu opens, so the portal can be placed with position:fixed instead of relying on a CSS-anchored ancestor. */
+  function toggleHamburger() {
+    if (open) {
+      setOpenMenu(null);
+      return;
+    }
+    const btn = ref.current?.querySelector('[data-tour="account-menu"], .shell-hamburger');
+    const rect = btn?.getBoundingClientRect();
+    setMenuRect(rect || null);
+    setOpenMenu("hamburger");
+  }
 
   /** Used on nav links that can point at the page already showing — skips the redundant navigation/remount instead of reloading a page you're already on. */
   function goTo(e, href) {
@@ -140,7 +166,7 @@ export default function TopNav({ user, extraLink }) {
             type="button"
             className="shell-topbar-user"
             data-tour="account-menu"
-            onClick={() => setOpenMenu(open ? null : "hamburger")}
+            onClick={toggleHamburger}
             aria-expanded={open}
           >
             {avatarUrl || user.photoURL ? (
@@ -158,7 +184,7 @@ export default function TopNav({ user, extraLink }) {
           <button
             type="button"
             className="shell-hamburger"
-            onClick={() => setOpenMenu(open ? null : "hamburger")}
+            onClick={toggleHamburger}
             aria-label="Menu"
             aria-expanded={open}
           >
@@ -168,30 +194,44 @@ export default function TopNav({ user, extraLink }) {
           </button>
         )}
 
-        {open && (
-          <div className="shell-nav-menu" onClick={(e) => e.stopPropagation()} style={{ zIndex: 601 }}>
-            <div className="shell-nav-menu-user">{user?.displayName || user?.email || "Account"}</div>
-            <button type="button" className="shell-nav-menu-item" onClick={() => navTo("/")}>
-              Home
-            </button>
-            <button type="button" className="shell-nav-menu-item" onClick={() => navTo("/profile")}>
-              Profile
-            </button>
-            <button type="button" className="shell-nav-menu-item" onClick={() => navTo("/account")}>
-              Preferences
-            </button>
-            {extraLink && (
-              <button type="button" className="shell-nav-menu-item" onClick={() => navTo(extraLink.href)}>
-                {extraLink.label}
-              </button>
-            )}
-            <button type="button" className="shell-nav-menu-item danger" onClick={handleSignOut}>
-              Sign out
-            </button>
-          </div>
-        )}
       </div>
     </div>
+    {open && menuRect && typeof document !== "undefined" && createPortal(
+      <div
+        ref={menuRef}
+        className="shell-nav-menu"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: "fixed",
+          top: menuRect.bottom + 8,
+          right: Math.max(8, window.innerWidth - menuRect.right),
+          left: "auto",
+          bottom: "auto",
+          zIndex: 9999,
+          pointerEvents: "auto",
+        }}
+      >
+        <div className="shell-nav-menu-user">{user?.displayName || user?.email || "Account"}</div>
+        <button type="button" className="shell-nav-menu-item" onClick={() => navTo("/")}>
+          Home
+        </button>
+        <button type="button" className="shell-nav-menu-item" onClick={() => navTo("/profile")}>
+          Profile
+        </button>
+        <button type="button" className="shell-nav-menu-item" onClick={() => navTo("/account")}>
+          Preferences
+        </button>
+        {extraLink && (
+          <button type="button" className="shell-nav-menu-item" onClick={() => navTo(extraLink.href)}>
+            {extraLink.label}
+          </button>
+        )}
+        <button type="button" className="shell-nav-menu-item danger" onClick={handleSignOut}>
+          Sign out
+        </button>
+      </div>,
+      document.body
+    )}
     <Mailbox user={user} />
     </>
   );
