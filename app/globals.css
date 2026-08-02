@@ -124,31 +124,63 @@ body {
 }
 
 .shell-topbar {
-  height: 56px;
+  height: 60px;
   flex: none;
   background: var(--s-bg-side);
   border-bottom: 1px solid var(--s-border);
   display: flex;
   align-items: center;
-  padding: 0 20px;
+  padding: 0 22px;
+  gap: 14px;
+}
+.shell-topbar-brand {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+  color: var(--s-text);
+  font-size: 18px;
+}
+.shell-topbar-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--s-border);
+  flex: none;
+}
+.shell-topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px 6px 6px;
+  border-radius: 24px;
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+  border: none;
+  background: transparent;
+  font-family: "DM Sans", sans-serif;
+}
+.shell-topbar-user:hover {
+  background: var(--s-bg-hover);
+}
+.shell-topbar-user-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--s-text-2);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .shell-topbar-right {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 12px 6px 6px;
-  border-radius: 24px;
-  cursor: pointer;
-  text-decoration: none;
-  color: inherit;
-}
-.shell-topbar-right:hover {
-  background: var(--s-bg-hover);
+  gap: 12px;
+  position: relative;
 }
 .shell-avatar {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: var(--s-bg-elevated);
   display: flex;
@@ -156,8 +188,13 @@ body {
   justify-content: center;
   font-family: "DM Sans", sans-serif;
   font-weight: 600;
-  font-size: 11px;
+  font-size: 12px;
   flex: none;
+  overflow: hidden;
+  object-fit: cover;
+}
+img.shell-avatar {
+  color: transparent;
 }
 
 /* consolidated hamburger nav (TopNav.js) */
@@ -183,7 +220,7 @@ body {
 }
 .shell-nav-menu {
   position: absolute;
-  top: 46px;
+  top: calc(100% + 8px);
   right: 0;
   background: var(--s-bg-side);
   border: 1px solid var(--s-border);
@@ -266,11 +303,11 @@ body {
   border-right: 1px solid var(--s-border);
 }
 .shell-switcher {
-  padding: 16px 18px;
+  padding: 18px;
   border-bottom: 1px solid var(--s-border);
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 12px;
   cursor: pointer;
   position: relative;
 }
@@ -278,8 +315,8 @@ body {
   background: var(--s-bg-hover);
 }
 .shell-swatch {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--s-radius-sm);
   background: var(--s-amber);
   color: var(--s-amber-ink);
@@ -359,17 +396,21 @@ body {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 11px 10px 11px 18px;
+  gap: 10px;
+  padding: 12px 10px 12px 18px;
   border-radius: 8px;
   color: var(--s-text-2);
   cursor: pointer;
-  font-size: 14.5px;
+  font-size: 15px;
   background: none;
   border: none;
   width: 100%;
   text-align: left;
   font-family: inherit;
+}
+.shell-chan svg {
+  flex: none;
+  opacity: 0.85;
 }
 .shell-chan:hover {
   background: var(--s-bg-hover);
@@ -437,7 +478,8 @@ body {
 .shell-view {
   flex: 1;
   overflow-y: auto;
-  padding: 32px;
+  padding: 36px;
+  width: 100%;
 }
 
 /* overview */
@@ -573,21 +615,68 @@ body {
   color: var(--s-text-2);
   border-color: var(--s-text-3);
 }
-.shell-task-add-btn {
+/* Shared button sizing — every "real" action button in the app (not the
+   plain-text .ghost buttons, which are intentionally minimal) uses this
+   same 38px height + var(--s-radius-md) corner radius, so buttons don't
+   feel like they came from three different design systems depending on
+   which screen you're on. */
+.shell-task-add-btn,
+.shell-btn-outline,
+.shell-btn-danger {
+  height: 38px;
   padding: 0 16px;
-  background: var(--s-amber);
-  color: var(--s-amber-ink);
-  border: none;
   border-radius: var(--s-radius-md);
   font-family: "DM Sans", sans-serif;
   font-weight: 700;
   font-size: 13px;
   cursor: pointer;
-  transition: opacity 0.15s ease, transform 0.1s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: opacity 0.15s ease, transform 0.1s ease, background 0.12s ease;
+  white-space: nowrap;
+}
+.shell-task-add-btn {
+  background: var(--s-amber);
+  color: var(--s-amber-ink);
+  border: none;
 }
 .shell-task-add-btn:hover {
   opacity: 0.85;
   transform: translateY(-1px);
+}
+.shell-task-add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+.shell-btn-outline {
+  background: transparent;
+  color: var(--s-text-2);
+  border: 1px solid var(--s-border);
+  font-weight: 600;
+}
+.shell-btn-outline:hover {
+  background: var(--s-bg-hover);
+  color: var(--s-text);
+}
+.shell-btn-outline:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.shell-btn-danger {
+  background: #e5534b;
+  color: #fff;
+  border: none;
+  font-weight: 700;
+}
+.shell-btn-danger:hover {
+  opacity: 0.88;
+}
+.shell-btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* matches */
@@ -657,7 +746,8 @@ body {
 .shell-chat-panel {
   border: 1px solid var(--s-border);
   background: var(--s-bg-side);
-  height: 420px;
+  flex: 1;
+  min-height: 320px;
   display: flex;
   flex-direction: column;
   border-radius: var(--s-radius-lg);
@@ -666,10 +756,10 @@ body {
 .shell-msgs {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 /* Appearance/Accessibility preferences, applied body-wide by TopNav.js */
 body.reduce-motion,
@@ -829,7 +919,7 @@ body.compact-mode .shell-task-card {
   background: var(--s-amber);
   color: var(--s-amber-ink);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--s-radius-md);
   font-family: "DM Sans", sans-serif;
   font-weight: 700;
   font-size: 13px;

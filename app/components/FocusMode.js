@@ -76,9 +76,9 @@ export default function FocusMode({ user }) {
         {current.label}
       </button>
       {open && (
-        <div className="shell-composer-menu" style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, left: "auto", minWidth: 160 }}>
+        <div className="shell-composer-menu" style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, left: "auto", width: 170, minWidth: 0 }}>
           {FOCUS_MODES.map((m) => (
-            <div key={m.key} className="shell-proj-row" onClick={() => pick(m.key)}>
+            <div key={m.key} className="shell-proj-row" onClick={() => pick(m.key)} style={{ padding: "8px 10px" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: m.color, flex: "none" }} />
               {m.label}
             </div>

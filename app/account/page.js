@@ -73,8 +73,25 @@ const PREF_TABS = [
   { key: "account", label: "My account" },
   { key: "voice", label: "Voice & Video" },
   { key: "appearance", label: "Appearance" },
+  { key: "notifications", label: "Notifications" },
   { key: "accessibility", label: "Accessibility" },
   { key: "danger", label: "Danger zone" },
+];
+
+// Same list translateMessage() in project/[id]/page.js accepts — kept here
+// so the dropdown and the actual translate call can't drift apart.
+const TRANSLATE_LANGUAGES = [
+  { code: "", label: "Match my browser (default)" },
+  { code: "en", label: "English" },
+  { code: "es", label: "Spanish" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+  { code: "pt", label: "Portuguese" },
+  { code: "hi", label: "Hindi" },
+  { code: "ar", label: "Arabic" },
+  { code: "zh-CN", label: "Chinese (Simplified)" },
+  { code: "ja", label: "Japanese" },
+  { code: "ko", label: "Korean" },
 ];
 
 function sectionLabelStyle() {
@@ -480,7 +497,8 @@ export default function AccountSettingsPage() {
                           <button
                             onClick={() => grantOrRefresh(entry, { refresh: true })}
                             disabled={busy !== null}
-                            style={{ padding: "8px 14px", background: "var(--s-amber)", color: "var(--s-amber-ink)", border: "none", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, cursor: busy !== null ? "not-allowed" : "pointer" }}
+                            className="shell-task-add-btn"
+                            style={{ height: 36, fontSize: 12 }}
                           >
                             {busy === entry.id ? "Working…" : entry.integration === "drive" ? "Refresh Drive access" : "Grant repo access"}
                           </button>
@@ -488,17 +506,8 @@ export default function AccountSettingsPage() {
                         <button
                           onClick={() => (connected ? handleDisconnect(entry) : grantOrRefresh(entry))}
                           disabled={busy !== null}
-                          style={{
-                            padding: "8px 14px",
-                            background: connected ? "transparent" : "var(--s-amber)",
-                            color: connected ? "var(--s-text-2)" : "var(--s-amber-ink)",
-                            border: connected ? "1px solid var(--s-border)" : "none",
-                            borderRadius: 7,
-                            fontFamily: "'DM Sans', sans-serif",
-                            fontSize: 12,
-                            fontWeight: 600,
-                            cursor: busy !== null ? "not-allowed" : "pointer",
-                          }}
+                          className={connected ? "shell-btn-outline" : "shell-task-add-btn"}
+                          style={{ height: 36, fontSize: 12 }}
                         >
                           {busy === entry.id ? "Working…" : connected ? "Disconnect" : "Connect"}
                         </button>
@@ -524,7 +533,7 @@ export default function AccountSettingsPage() {
                         {f.factorId === PhoneMultiFactorGenerator.FACTOR_ID ? <IconPhone size={14} /> : <IconLock size={14} />}
                         {f.displayName || (f.factorId === PhoneMultiFactorGenerator.FACTOR_ID ? f.phoneNumber : "Authenticator app")}
                       </span>
-                      <button onClick={() => handleRemoveFactor(f)} style={{ padding: "6px 12px", background: "transparent", border: "1px solid var(--s-border)", color: "var(--s-text-2)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, cursor: "pointer" }}>
+                      <button onClick={() => handleRemoveFactor(f)} className="shell-btn-outline" style={{ height: 32, fontSize: 12 }}>
                         Remove
                       </button>
                     </div>
@@ -537,10 +546,10 @@ export default function AccountSettingsPage() {
 
               {!mfaMode && (
                 <div style={{ display: "flex", gap: 8, marginBottom: 30 }}>
-                  <button onClick={() => setMfaMode("phone")} style={{ padding: "8px 14px", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", color: "var(--s-text)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, cursor: "pointer" }}>
+                  <button onClick={() => setMfaMode("phone")} className="shell-btn-outline" style={{ fontSize: 12 }}>
                     Add phone number
                   </button>
-                  <button onClick={() => { setMfaMode("totp"); handleStartTotp(); }} style={{ padding: "8px 14px", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", color: "var(--s-text)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, cursor: "pointer" }}>
+                  <button onClick={() => { setMfaMode("totp"); handleStartTotp(); }} className="shell-btn-outline" style={{ fontSize: 12 }}>
                     Add authenticator app
                   </button>
                 </div>
@@ -626,7 +635,7 @@ export default function AccountSettingsPage() {
                 </form>
               )}
 
-              <button onClick={() => signOut(auth)} className="shell-auth-btn" style={{ maxWidth: 200 }}>
+              <button onClick={() => signOut(auth)} className="shell-btn-outline">
                 Sign out
               </button>
             </>
@@ -660,10 +669,28 @@ export default function AccountSettingsPage() {
                 ))}
               </select>
               {deviceError && <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 12 }}>{deviceError}</p>}
-              <p style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>
+              <p style={{ fontSize: 11.5, color: "var(--s-text-3)", marginBottom: 24 }}>
                 Used as the default the next time you start a Meeting in any project. Device names only show up
                 once you've granted mic/camera permission at least once — that's your browser, not this app.
               </p>
+
+              <p style={sectionLabelStyle()}>Joining a meeting</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 13.5, fontWeight: 600 }}>Join with camera off</div>
+                    <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>You can always turn it back on once you're in.</div>
+                  </div>
+                  <Toggle checked={Boolean(prefs.camOffOnJoin)} onChange={(v) => savePreference({ camOffOnJoin: v })} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 13.5, fontWeight: 600 }}>Join with mic muted</div>
+                    <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Starts every meeting muted until you unmute.</div>
+                  </div>
+                  <Toggle checked={Boolean(prefs.micOffOnJoin)} onChange={(v) => savePreference({ micOffOnJoin: v })} />
+                </div>
+              </div>
             </>
           )}
 
@@ -677,12 +704,47 @@ export default function AccountSettingsPage() {
               </div>
 
               <p style={sectionLabelStyle()}>Layout</p>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 24 }}>
                 <div>
                   <div style={{ fontSize: 13.5, fontWeight: 600 }}>Compact mode</div>
                   <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Tighter spacing in chat and on task cards.</div>
                 </div>
                 <Toggle checked={Boolean(prefs.compactMode)} onChange={(v) => savePreference({ compactMode: v })} />
+              </div>
+
+              <p style={sectionLabelStyle()}>Translation language</p>
+              <select
+                value={prefs.translateLanguage || ""}
+                onChange={(e) => savePreference({ translateLanguage: e.target.value })}
+                className="shell-input"
+                style={{ width: "100%", marginBottom: 8 }}
+              >
+                {TRANSLATE_LANGUAGES.map((l) => (
+                  <option key={l.code} value={l.code}>{l.label}</option>
+                ))}
+              </select>
+              <p style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>
+                Used when you tap &ldquo;Translate&rdquo; under a chat message.
+              </p>
+            </>
+          )}
+
+          {prefTab === "notifications" && (
+            <>
+              <p style={sectionLabelStyle()}>Chat</p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Sound on new message</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Plays a short chime when a teammate sends a message in a project you have open.</div>
+                </div>
+                <Toggle checked={Boolean(prefs.messageSound)} onChange={(v) => savePreference({ messageSound: v })} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Only for @mentions</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Limit the sound above to messages that mention you by name.</div>
+                </div>
+                <Toggle checked={Boolean(prefs.messageSoundMentionsOnly)} onChange={(v) => savePreference({ messageSoundMentionsOnly: v })} disabled={!prefs.messageSound} />
               </div>
             </>
           )}
@@ -716,7 +778,8 @@ export default function AccountSettingsPage() {
                 <button
                   onClick={handleDisableAccount}
                   disabled={disablingAccount}
-                  style={{ padding: "8px 14px", background: "transparent", border: "1px solid var(--s-border)", color: "var(--s-text)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, cursor: disablingAccount ? "not-allowed" : "pointer" }}
+                  className="shell-btn-outline"
+                  style={{ fontSize: 12 }}
                 >
                   {disablingAccount ? "Disabling…" : "Disable account"}
                 </button>
@@ -738,18 +801,8 @@ export default function AccountSettingsPage() {
                   <button
                     onClick={handleDeleteAccount}
                     disabled={deletingAccount || deleteConfirmText.trim().toUpperCase() !== "DELETE"}
-                    style={{
-                      padding: "8px 14px",
-                      background: "#e5534b",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: 7,
-                      fontFamily: "'DM Sans', sans-serif",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: deletingAccount || deleteConfirmText.trim().toUpperCase() !== "DELETE" ? "not-allowed" : "pointer",
-                      opacity: deleteConfirmText.trim().toUpperCase() !== "DELETE" ? 0.5 : 1,
-                    }}
+                    className="shell-btn-danger"
+                    style={{ fontSize: 12 }}
                   >
                     {deletingAccount ? "Deleting…" : "Delete account"}
                   </button>

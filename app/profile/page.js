@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../../lib/firebase";
 import { searchSkills } from "../../lib/skillsCatalog";
-import { listPublicGithubRepos } from "../../lib/integrations";
+import { integrationsDocPath, listPublicGithubRepos } from "../../lib/integrations";
 import { uploadFile } from "../../lib/storage";
 import { useAuthGate } from "../../lib/useAuthGate";
 import Autocomplete from "../components/Autocomplete";
@@ -31,6 +32,7 @@ export default function ProfilePage() {
   const [newPortfolioTitle, setNewPortfolioTitle] = useState("");
   const [newPortfolioUrl, setNewPortfolioUrl] = useState("");
   const [newPortfolioDesc, setNewPortfolioDesc] = useState("");
+  const [integrations, setIntegrations] = useState(null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
@@ -38,6 +40,14 @@ export default function ProfilePage() {
   }, []);
 
   useAuthGate(user);
+
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(doc(db, ...integrationsDocPath(user.uid)), (snap) => {
+      setIntegrations(snap.exists() ? snap.data() : {});
+    });
+    return () => unsub();
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -226,6 +236,39 @@ export default function ProfilePage() {
             </div>
 
             <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+              Connections
+            </p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 28 }}>
+              {[
+                { label: "Google Drive", connected: Boolean(integrations?.driveAccessToken) },
+                { label: "GitHub", connected: Boolean(integrations?.githubAccessToken) },
+              ].map((c) => (
+                <span
+                  key={c.label}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 7,
+                    fontSize: 12,
+                    padding: "6px 12px",
+                    borderRadius: 999,
+                    border: "1px solid var(--s-border)",
+                    background: "var(--s-bg-side)",
+                    color: c.connected ? "var(--s-text)" : "var(--s-text-3)",
+                  }}
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: c.connected ? "var(--s-green, #5fbf8f)" : "var(--s-text-3)" }} />
+                  {c.label} {c.connected ? "connected" : "not connected"}
+                </span>
+              ))}
+              {(!integrations?.driveAccessToken || !integrations?.githubAccessToken) && (
+                <Link href="/account" style={{ fontSize: 12, color: "var(--s-amber)", alignSelf: "center" }}>
+                  Connect in Preferences →
+                </Link>
+              )}
+            </div>
+
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
               Skills
             </p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
@@ -259,19 +302,7 @@ export default function ProfilePage() {
                   fontFamily: "inherit",
                 }}
               />
-              <button
-                onClick={() => addSkill()}
-                style={{
-                  padding: "10px 16px",
-                  background: "var(--s-amber)",
-                  color: "var(--s-amber-ink)",
-                  border: "none",
-                  fontFamily: "'DM Sans', sans-serif",
-                  fontSize: 12,
-                  cursor: "pointer",
-                  borderRadius: 6,
-                }}
-              >
+              <button onClick={() => addSkill()} className="shell-task-add-btn" style={{ fontSize: 12 }}>
                 Add
               </button>
             </div>
@@ -338,20 +369,7 @@ export default function ProfilePage() {
                 className="shell-input"
                 style={{ fontFamily: "inherit", fontSize: 13, padding: 10, resize: "vertical" }}
               />
-              <button
-                type="submit"
-                style={{
-                  alignSelf: "flex-start",
-                  padding: "8px 16px",
-                  background: "var(--s-amber)",
-                  color: "var(--s-amber-ink)",
-                  border: "none",
-                  fontFamily: "'DM Sans', sans-serif",
-                  fontSize: 12,
-                  cursor: "pointer",
-                  borderRadius: 6,
-                }}
-              >
+              <button type="submit" className="shell-task-add-btn" style={{ alignSelf: "flex-start", fontSize: 12 }}>
                 Add to portfolio
               </button>
             </form>

@@ -33,12 +33,12 @@ import {
   deleteCalendarEvent,
   uploadFileToDrive,
 } from "../../../lib/integrations";
-import { uploadFile, safeFileName } from "../../../lib/storage";
+import { uploadFile, safeFileName, compressImage } from "../../../lib/storage";
 import Autocomplete from "../../components/Autocomplete";
 import TopNav from "../../components/TopNav";
 import CADViewer, { guessCadKind } from "../../components/CADViewer";
 import Toggle from "../../components/Toggle";
-import { IconGear, IconMic, IconSparkle } from "../../components/icons";
+import { IconGear, IconMic, IconSparkle, IconLayout, IconCheckSquare, IconTarget, IconCalendar, IconChat } from "../../components/icons";
 import { focusModeInfo } from "../../components/FocusMode";
 import VideoCall from "./VideoCall";
 import { useAuthGate } from "../../../lib/useAuthGate";
@@ -73,17 +73,11 @@ const SEED_CANDIDATES = [
 ];
 
 const CHANNELS = [
-  { key: "overview", label: "Overview", desc: "Brief, roles, and status for this project" },
-  { key: "tasks", label: "Tasks", desc: "Drag cards between columns" },
-  { key: "matches", label: "Matches", desc: "Ranked candidates for the roles still open" },
-  { key: "calendar", label: "Calendar", desc: "Shared events for this project" },
-  { key: "chat", label: "Team chat", desc: "" },
-];
-
-const RETRO_COLUMNS = [
-  { key: "wentWell", label: "Went well", color: "#5fbf8f" },
-  { key: "toImprove", label: "To improve", color: "#e0a339" },
-  { key: "actionItems", label: "Action items", color: "#6fa8d8" },
+  { key: "overview", label: "Overview", desc: "Brief, roles, and status for this project", Icon: IconLayout },
+  { key: "tasks", label: "Tasks", desc: "Drag cards between columns", Icon: IconCheckSquare },
+  { key: "matches", label: "Matches", desc: "Ranked candidates for the roles still open", Icon: IconTarget },
+  { key: "calendar", label: "Calendar", desc: "Shared events for this project", Icon: IconCalendar },
+  { key: "chat", label: "Team chat", desc: "", Icon: IconChat },
 ];
 
 const WHITEBOARD_COLORS = ["#1a1a1a", "#e5534b", "#e0a339", "#5fbf8f", "#6fa8d8", "#c46fd8"];
@@ -94,14 +88,19 @@ const FILES_CHANNEL = { key: "files", label: "Files", desc: "Every file and link
 // Activities has no sidebar nav entry (only reachable via chat's "Open
 // Activities" attachment or from inside a Meeting), but still needs a
 // label/desc for the header when it IS open — see activeChannel below.
-const ACTIVITIES_CHANNEL = { key: "activities", label: "Activities", desc: "Whiteboard & retro board" };
+const ACTIVITIES_CHANNEL = { key: "activities", label: "Whiteboard", desc: "Draw together in real time" };
 
 export default function ProjectPage() {
   const { id } = useParams();
   const router = useRouter();
   const [user, setUser] = useState(undefined);
   const [tab, setTab] = useState("overview");
-  const [project, setProject] = useState(null);
+  // undefined = still loading (haven't heard back from Firestore yet);
+  // null = Firestore confirmed the project doesn't exist (or isn't
+  // accessible). Collapsing these into one state is what caused the old
+  // "Project not found, or still loading" message to flash on every single
+  // page load, even for projects that loaded fine a moment later.
+  const [project, setProject] = useState(undefined);
   const [myProjects, setMyProjects] = useState([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [tasks, setTasks] = useState([]);
@@ -157,11 +156,12 @@ export default function ProjectPage() {
   const [recordError, setRecordError] = useState("");
   const [voiceUploading, setVoiceUploading] = useState(false);
   const mediaRecorderRef = useRef(null);
+  const knownMessageIdsRef = useRef(new Set());
+  const messagesFirstLoadRef = useRef(true);
   const recordChunksRef = useRef([]);
   const recordTimerRef = useRef(null);
   const recordCancelledRef = useRef(false);
   const recordSecondsRef = useRef(0);
-  const [activitySubTab, setActivitySubTab] = useState("whiteboard");
   const [strokes, setStrokes] = useState([]);
   const [brushColor, setBrushColor] = useState(WHITEBOARD_COLORS[0]);
   const [brushWidth, setBrushWidth] = useState(3);
@@ -169,11 +169,10 @@ export default function ProjectPage() {
   const [boardTool, setBoardTool] = useState("pen"); // "pen" | "eraser"
   const [customColors, setCustomColors] = useState([]);
   const [boardBusy, setBoardBusy] = useState(false);
+  const [boardError, setBoardError] = useState("");
   const canvasRef = useRef(null);
   const drawingRef = useRef(false);
   const currentPointsRef = useRef([]);
-  const [retroNotes, setRetroNotes] = useState([]);
-  const [retroDrafts, setRetroDrafts] = useState({ wentWell: "", toImprove: "", actionItems: "" });
   const [viewingCad, setViewingCad] = useState(null); // { url, kind } | null
   const [memberProfiles, setMemberProfiles] = useState({}); // uid -> profile doc data
   const [translations, setTranslations] = useState({}); // messageId -> { text, loading, error, lang }
@@ -276,12 +275,57 @@ export default function ProjectPage() {
 
   useEffect(() => {
     if ((tab !== "chat" && tab !== "files") || !id) return;
+    // Starting fresh for this project — don't let the "new message" sound
+    // effect below treat the initial bulk load as a wave of new messages.
+    knownMessageIdsRef.current = new Set();
+    messagesFirstLoadRef.current = true;
     const q = query(collection(db, "projects", id, "messages"), orderBy("createdAt"));
     const unsub = onSnapshot(q, (snap) => {
       setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
     return () => unsub();
   }, [tab, id]);
+
+  // "Sound on new message" / "Only for @mentions" preferences (Preferences
+  // → Notifications). Plays a short two-tone chime via the Web Audio API
+  // (no audio file to ship/load) whenever a message from someone else shows
+  // up while this project's chat is mounted. Skips the initial bulk load
+  // and anything the current user themself just sent.
+  useEffect(() => {
+    const incomingIds = messages.map((m) => m.id);
+    if (messagesFirstLoadRef.current) {
+      knownMessageIdsRef.current = new Set(incomingIds);
+      messagesFirstLoadRef.current = false;
+      return;
+    }
+    const prefs = memberProfiles[user?.uid]?.preferences || {};
+    const newOnes = messages.filter((m) => !knownMessageIdsRef.current.has(m.id) && m.senderId !== user?.uid);
+    knownMessageIdsRef.current = new Set(incomingIds);
+    if (newOnes.length === 0 || !prefs.messageSound) return;
+    const relevant = prefs.messageSoundMentionsOnly ? newOnes.some((m) => m.mentions?.includes(user?.uid)) : true;
+    if (!relevant) return;
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const now = ctx.currentTime;
+      [740, 990].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        const start = now + i * 0.09;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.12, start + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+        osc.start(start);
+        osc.stop(start + 0.18);
+      });
+    } catch (err) {
+      // Some browsers block audio until the user has interacted with the
+      // page at least once — that's fine, just no chime this time.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
 
   useEffect(() => {
     if (tab !== "calendar" || !id) return;
@@ -301,20 +345,11 @@ export default function ProjectPage() {
     return () => unsub();
   }, [tab, id]);
 
-  useEffect(() => {
-    if (tab !== "activities" || !id) return;
-    const q = query(collection(db, "projects", id, "retro"), orderBy("createdAt"));
-    const unsub = onSnapshot(q, (snap) => {
-      setRetroNotes(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
-    return () => unsub();
-  }, [tab, id]);
-
   // Redraw the whole board any time strokes change — strokes are only
   // written to Firestore once a pen stroke is lifted (not live per-point),
   // so this keeps every member's canvas in sync without a huge write volume.
   useEffect(() => {
-    if (activitySubTab !== "whiteboard" || !canvasRef.current) return;
+    if (tab !== "activities" || !canvasRef.current) return;
     const ctx = canvasRef.current.getContext("2d");
     ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     ctx.fillStyle = "#ffffff";
@@ -335,7 +370,7 @@ export default function ProjectPage() {
     }
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = 1;
-  }, [strokes, activitySubTab]);
+  }, [strokes, tab]);
 
   function canvasPoint(e) {
     const canvas = canvasRef.current;
@@ -401,10 +436,16 @@ export default function ProjectPage() {
   async function undoLastStroke() {
     const last = strokes[strokes.length - 1];
     if (!last) return;
+    setBoardError("");
     try {
       await deleteDoc(doc(db, "projects", id, "whiteboard", last.id));
     } catch (err) {
       console.error("Failed to undo stroke:", err);
+      setBoardError(
+        err.code === "permission-denied"
+          ? "Couldn't undo — you don't have permission to edit this board (check Firestore rules)."
+          : "Couldn't undo that stroke — try again."
+      );
     }
   }
 
@@ -415,38 +456,19 @@ export default function ProjectPage() {
 
   async function clearWhiteboard() {
     setBoardBusy(true);
+    setBoardError("");
     try {
       const snap = await getDocs(collection(db, "projects", id, "whiteboard"));
       await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
     } catch (err) {
       console.error("Failed to clear whiteboard:", err);
+      setBoardError(
+        err.code === "permission-denied"
+          ? "Couldn't clear the board — you don't have permission to edit this board (check Firestore rules)."
+          : "Couldn't clear the board — try again."
+      );
     } finally {
       setBoardBusy(false);
-    }
-  }
-
-  async function addRetroNote(columnKey) {
-    const text = (retroDrafts[columnKey] || "").trim();
-    if (!text || !user) return;
-    setRetroDrafts((prev) => ({ ...prev, [columnKey]: "" }));
-    try {
-      await addDoc(collection(db, "projects", id, "retro"), {
-        column: columnKey,
-        text,
-        uid: user.uid,
-        name: user.displayName || user.email || "Unknown",
-        createdAt: serverTimestamp(),
-      });
-    } catch (err) {
-      console.error("Failed to add retro note:", err);
-    }
-  }
-
-  async function removeRetroNote(noteId) {
-    try {
-      await deleteDoc(doc(db, "projects", id, "retro", noteId));
-    } catch (err) {
-      console.error("Failed to remove retro note:", err);
     }
   }
 
@@ -553,9 +575,11 @@ export default function ProjectPage() {
 
   // On-demand, per-viewer translation via /api/translate (Google Translate
   // API) — nothing is stored or broadcast, it just fills in translations[id]
-  // for this browser. Target language defaults to the browser's language.
+  // for this browser. Target language defaults to the "Translation
+  // language" preference set in Preferences → Appearance, falling back to
+  // the browser's own language if that's unset.
   async function translateMessage(m) {
-    const target = (navigator.language || "en").split("-")[0];
+    const target = memberProfiles[user?.uid]?.preferences?.translateLanguage || (navigator.language || "en").split("-")[0];
     setTranslations((prev) => ({ ...prev, [m.id]: { ...(prev[m.id] || {}), loading: true, error: "" } }));
     try {
       const res = await fetch("/api/translate", {
@@ -756,8 +780,12 @@ export default function ProjectPage() {
     setChatFileError("");
     setChatFilePct(0);
     try {
-      const path = `projects/${id}/chat/${Date.now()}-${safeFileName(file.name)}`;
-      const url = await uploadFile(path, file, setChatFilePct);
+      // Only images get downscaled — other file types (PDFs, CAD files,
+      // zips, etc.) are uploaded as-is since there's no safe generic way to
+      // shrink those client-side.
+      const toUpload = file.type?.startsWith("image/") ? await compressImage(file) : file;
+      const path = `projects/${id}/chat/${Date.now()}-${safeFileName(toUpload.name || file.name)}`;
+      const url = await uploadFile(path, toUpload, setChatFilePct);
 
       let driveUrl = null;
       if (alsoAddToDrive && myIntegrations?.driveAccessToken) {
@@ -778,8 +806,8 @@ export default function ProjectPage() {
         url,
         provider: "upload",
         title: file.name,
-        fileSize: file.size,
-        fileType: file.type || "",
+        fileSize: toUpload.size,
+        fileType: toUpload.type || file.type || "",
         driveUrl,
         senderId: user.uid,
         senderName: user.displayName || user.email || "Unknown",
@@ -851,7 +879,7 @@ export default function ProjectPage() {
     setOpenReactionPicker(null);
   }
 
-  // Activities (whiteboard + retro) has no nav entry of its own anymore —
+  // Activities (whiteboard) has no nav entry of its own anymore —
   // it's only reachable by attaching it from chat (this) or opening it from
   // inside an active Meeting (VideoCall's onOpenActivities). This posts a
   // clickable chat card that jumps everyone to the Activities tab.
@@ -977,8 +1005,9 @@ export default function ProjectPage() {
     setImageError("");
     setImageUploadPct(0);
     try {
-      const path = `projects/${id}/cover-${Date.now()}-${safeFileName(file.name)}`;
-      const url = await uploadFile(path, file, setImageUploadPct);
+      const compressed = await compressImage(file);
+      const path = `projects/${id}/cover-${Date.now()}-${safeFileName(compressed.name || file.name)}`;
+      const url = await uploadFile(path, compressed, setImageUploadPct);
       await updateDoc(doc(db, "projects", id), { imageUrl: url, imagePath: path });
     } catch (err) {
       console.error("Image upload failed:", err);
@@ -1110,9 +1139,10 @@ export default function ProjectPage() {
   /**
    * Firestore doesn't cascade-delete subcollections, so this walks every
    * one this app creates under a project (tasks/messages/events/
-   * whiteboard/retro) and removes each doc before removing the project
-   * itself. Owner-only — enforced both here and (should be) in Firestore
-   * rules.
+   * whiteboard, plus "retro" for older projects that still have leftover
+   * retro-board docs from before that feature was removed) and removes
+   * each doc before removing the project itself. Owner-only — enforced
+   * both here and (should be) in Firestore rules.
    */
   async function deleteProject() {
     if (!user || !project || user.uid !== project.ownerId) return;
@@ -1132,13 +1162,17 @@ export default function ProjectPage() {
     }
   }
 
-  if (!user) return <div className="shell" />;
+  if (!user || project === undefined) return <div className="shell" />;
 
   if (project === null) {
     return (
       <div className="shell">
+        <TopNav user={user} />
         <div className="shell-view">
-          <p className="notice">Project not found, or still loading.</p>
+          <p className="notice">
+            Couldn&rsquo;t find that project — it may have been deleted, or you may not have access to it.{" "}
+            <Link href="/" style={{ color: "var(--s-amber)" }}>Go home</Link>
+          </p>
         </div>
       </div>
     );
@@ -1227,6 +1261,7 @@ export default function ProjectPage() {
                 className={"shell-chan" + (tab === c.key ? " active" : "")}
                 onClick={() => setTab(c.key)}
               >
+                <c.Icon size={14} />
                 {c.label}
                 {c.key === "tasks" && tasks.length > 0 && (
                   <span className="shell-fill-pill">{tasks.length}</span>
@@ -1235,7 +1270,12 @@ export default function ProjectPage() {
             ))}
           </div>
 
-          <div className="shell-chan-group" style={{ marginTop: "auto", paddingTop: 0, borderTop: "1px solid var(--s-border)" }}>
+          {/* Files/Documentation/Settings sit right below the regular channel
+              list (not pinned to the very bottom of the sidebar) so the
+              divider line above them stays close to "Team chat" instead of
+              floating in the middle of empty space on short channel lists —
+              the spacer below absorbs whatever room is left instead. */}
+          <div className="shell-chan-group" style={{ paddingTop: 10, borderTop: "1px solid var(--s-border)" }}>
             <button
               className={"shell-chan" + (tab === "files" ? " active" : "")}
               onClick={() => setTab("files")}
@@ -1255,6 +1295,7 @@ export default function ProjectPage() {
               <IconGear /> Settings
             </button>
           </div>
+          <div style={{ flex: 1 }} />
         </div>
 
         <div className="shell-main">
@@ -1264,7 +1305,7 @@ export default function ProjectPage() {
           </div>
 
           {tab === "overview" && project && (
-            <div className="shell-view" style={{ maxWidth: 640 }}>
+            <div className="shell-view">
               {project.imageUrl && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -1550,7 +1591,7 @@ export default function ProjectPage() {
           )}
 
           {tab === "matches" && project && (
-            <div className="shell-view" style={{ maxWidth: 640 }}>
+            <div className="shell-view">
               {(project.roles || []).length === 0 && (
                 <p style={{ fontSize: 13, color: "var(--s-text-3)" }}>
                   Add roles in Overview first, then matches will show up here.
@@ -1596,7 +1637,7 @@ export default function ProjectPage() {
           )}
 
           {tab === "calendar" && (
-            <div className="shell-view" style={{ maxWidth: 640 }}>
+            <div className="shell-view">
               <form onSubmit={createEvent} className="shell-card" style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
                 <p style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13 }}>New event</p>
                 <input
@@ -1697,28 +1738,9 @@ export default function ProjectPage() {
           )}
 
           {tab === "activities" && (
-            <div className="shell-view" style={{ maxWidth: 760 }}>
-              <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
-                <button
-                  type="button"
-                  className={"shell-chan" + (activitySubTab === "whiteboard" ? " active" : "")}
-                  style={{ width: "auto" }}
-                  onClick={() => setActivitySubTab("whiteboard")}
-                >
-                  Whiteboard
-                </button>
-                <button
-                  type="button"
-                  className={"shell-chan" + (activitySubTab === "retro" ? " active" : "")}
-                  style={{ width: "auto" }}
-                  onClick={() => setActivitySubTab("retro")}
-                >
-                  Retro board
-                </button>
-              </div>
-
-              {activitySubTab === "whiteboard" && (
+            <div className="shell-view">
                 <div>
+                  {boardError && <p className="notice" style={{ marginBottom: 14 }}>{boardError}</p>}
                   <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10, flexWrap: "wrap" }}>
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       {WHITEBOARD_COLORS.concat(customColors).map((c) => (
@@ -1770,16 +1792,8 @@ export default function ProjectPage() {
                       type="button"
                       onClick={() => setBoardTool((t) => (t === "eraser" ? "pen" : "eraser"))}
                       title="Eraser"
-                      style={{
-                        padding: "5px 12px",
-                        borderRadius: 7,
-                        fontSize: 12,
-                        fontFamily: "'DM Sans', sans-serif",
-                        cursor: "pointer",
-                        background: boardTool === "eraser" ? "var(--s-amber)" : "transparent",
-                        color: boardTool === "eraser" ? "var(--s-amber-ink)" : "var(--s-text-2)",
-                        border: "1px solid var(--s-border)",
-                      }}
+                      className={boardTool === "eraser" ? "shell-task-add-btn" : "shell-btn-outline"}
+                      style={{ height: 32, padding: "0 14px", fontSize: 12 }}
                     >
                       Eraser
                     </button>
@@ -1795,10 +1809,10 @@ export default function ProjectPage() {
                     </label>
 
                     <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
-                      <button type="button" onClick={undoLastStroke} disabled={strokes.length === 0} className="ghost">
+                      <button type="button" onClick={undoLastStroke} disabled={strokes.length === 0} className="shell-btn-outline" style={{ height: 32, padding: "0 14px", fontSize: 12 }}>
                         Undo
                       </button>
-                      <button type="button" onClick={clearWhiteboard} disabled={boardBusy} className="ghost">
+                      <button type="button" onClick={clearWhiteboard} disabled={boardBusy} className="shell-btn-outline" style={{ height: 32, padding: "0 14px", fontSize: 12 }}>
                         {boardBusy ? "Clearing…" : "Clear board"}
                       </button>
                     </div>
@@ -1809,7 +1823,7 @@ export default function ProjectPage() {
                     height={420}
                     style={{
                       width: "100%",
-                      maxWidth: 760,
+                      maxWidth: 900,
                       height: "auto",
                       border: "1px solid var(--s-border)",
                       borderRadius: 12,
@@ -1826,72 +1840,31 @@ export default function ProjectPage() {
                     onTouchEnd={endStroke}
                   />
                 </div>
-              )}
-
-              {activitySubTab === "retro" && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
-                  {RETRO_COLUMNS.map((col) => (
-                    <div key={col.key}>
-                      <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 12.5, color: col.color, marginBottom: 8 }}>
-                        {col.label}
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
-                        {retroNotes
-                          .filter((n) => n.column === col.key)
-                          .map((n) => (
-                            <div key={n.id} className="shell-retro-note" style={{ borderLeft: `4px solid ${col.color}` }}>
-                              <div style={{ fontSize: 12.5 }}>{n.text}</div>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
-                                <span style={{ fontSize: 10, color: "var(--s-text-3)" }}>{n.name}</span>
-                                {n.uid === user?.uid && (
-                                  <span onClick={() => removeRetroNote(n.id)} style={{ cursor: "pointer", color: "var(--s-text-3)", fontSize: 12 }}>
-                                    ×
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                      </div>
-                      <form
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          addRetroNote(col.key);
-                        }}
-                      >
-                        <textarea
-                          value={retroDrafts[col.key]}
-                          onChange={(e) => setRetroDrafts((prev) => ({ ...prev, [col.key]: e.target.value }))}
-                          placeholder="Add a note…"
-                          rows={2}
-                          className="shell-input"
-                          style={{ width: "100%", fontFamily: "inherit", fontSize: 12.5, padding: 8, resize: "vertical" }}
-                        />
-                        <button type="submit" className="shell-task-add-btn" style={{ marginTop: 6, padding: "6px 12px", fontSize: 11 }}>
-                          Add
-                        </button>
-                      </form>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
           {tab === "chat" && (
-            <div className="shell-view" style={{ maxWidth: 640 }}>
+            <div className="shell-view" style={{ display: "flex", flexDirection: "column" }}>
               <VideoCall
                 projectId={id}
                 onOpenActivities={() => setTab("activities")}
                 startSignal={meetingStartSignal}
                 preferredMicId={memberProfiles[user?.uid]?.preferences?.micId}
                 preferredCamId={memberProfiles[user?.uid]?.preferences?.camId}
+                joinMicMuted={Boolean(memberProfiles[user?.uid]?.preferences?.micOffOnJoin)}
+                joinCamOff={Boolean(memberProfiles[user?.uid]?.preferences?.camOffOnJoin)}
               />
               <div className="shell-chat-panel">
                 <div className="shell-msgs">
                   {messages.map((m) => (
                     <div key={m.id} className={"shell-msg" + (m.mentions?.includes(user?.uid) ? " mentioned" : "")}>
                       <span className="shell-presence-wrap" style={{ marginTop: 2 }}>
-                        <span className="shell-avatar">{m.senderName?.[0]?.toUpperCase()}</span>
+                        {memberProfiles[m.senderId]?.avatarUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={memberProfiles[m.senderId].avatarUrl} alt="" className="shell-avatar" />
+                        ) : (
+                          <span className="shell-avatar">{m.senderName?.[0]?.toUpperCase()}</span>
+                        )}
                         {(() => {
                           void presenceTick;
                           const online = isOnline(memberProfiles[m.senderId]?.lastActiveAt);
@@ -2033,7 +2006,7 @@ export default function ProjectPage() {
                         {m.type === "activities-ref" && (
                           <button type="button" className="shell-taskref-card" onClick={() => setTab("activities")}>
                             <IconSparkle size={13} />
-                            Activities — whiteboard & retro board
+                            Open whiteboard
                           </button>
                         )}
 
@@ -2257,7 +2230,7 @@ export default function ProjectPage() {
                             Start a meeting
                           </div>
                           <div className="shell-proj-row" onClick={() => { sendActivitiesRef(); setComposerMenuOpen(false); }}>
-                            Open Activities (whiteboard & retro)
+                            Open whiteboard
                           </div>
                         </div>
                       )}
@@ -2365,7 +2338,7 @@ export default function ProjectPage() {
           )}
 
           {tab === "docs" && project && (
-            <div className="shell-view" style={{ maxWidth: 720 }}>
+            <div className="shell-view" style={{ maxWidth: 900 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
                 <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", margin: 0 }}>
                   Shared notes
@@ -2401,7 +2374,7 @@ export default function ProjectPage() {
           )}
 
           {tab === "settings" && project && (
-            <div className="shell-view" style={{ maxWidth: 560 }}>
+            <div className="shell-view" style={{ maxWidth: 720 }}>
               <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
                 Image
               </p>

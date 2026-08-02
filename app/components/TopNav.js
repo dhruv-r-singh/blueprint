@@ -17,6 +17,7 @@ import FocusMode from "./FocusMode";
 
 export default function TopNav({ user, extraLink }) {
   const [open, setOpen] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState("");
   const ref = useRef(null);
   const router = useRouter();
 
@@ -43,6 +44,7 @@ export default function TopNav({ user, extraLink }) {
   useEffect(() => {
     if (!user?.uid) return;
     const unsub = onSnapshot(doc(db, "profiles", user.uid), (snap) => {
+      setAvatarUrl(snap.data()?.avatarUrl || "");
       const prefs = snap.data()?.preferences || {};
       document.body.classList.toggle("reduce-motion", Boolean(prefs.reduceMotion));
       document.body.classList.toggle("compact-mode", Boolean(prefs.compactMode));
@@ -67,25 +69,40 @@ export default function TopNav({ user, extraLink }) {
 
   return (
     <div className="shell-topbar">
-      <div className="shell-topbar-right" style={{ marginLeft: "auto", position: "relative" }} ref={ref}>
-        <button
-          type="button"
-          className="shell-hamburger"
-          onClick={() => setOpen((v) => !v)}
-          aria-label="Menu"
-          aria-expanded={open}
-        >
-          <span />
-          <span />
-          <span />
-        </button>
+      <Link href="/" className="shell-topbar-brand brand-wordmark" aria-label="Blueprint home">
+        Blueprint
+      </Link>
 
+      <div className="shell-topbar-right" ref={ref}>
         {user && <FocusMode user={user} />}
 
+        {user && <span className="shell-topbar-divider" />}
+
         {user && (
-          <span className="shell-avatar" style={{ marginLeft: 10 }} onClick={() => setOpen((v) => !v)}>
-            {(user.displayName || user.email || "?")[0]?.toUpperCase()}
-          </span>
+          <button type="button" className="shell-topbar-user" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+            {avatarUrl || user.photoURL ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={avatarUrl || user.photoURL} alt="" className="shell-avatar" />
+            ) : (
+              <span className="shell-avatar">{(user.displayName || user.email || "?")[0]?.toUpperCase()}</span>
+            )}
+            <span className="shell-topbar-user-name">{user.displayName || user.email}</span>
+            <span style={{ color: "var(--s-text-3)", fontSize: 11 }}>⌄</span>
+          </button>
+        )}
+
+        {!user && (
+          <button
+            type="button"
+            className="shell-hamburger"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Menu"
+            aria-expanded={open}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
         )}
 
         {open && (

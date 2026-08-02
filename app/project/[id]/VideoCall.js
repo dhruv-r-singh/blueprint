@@ -38,7 +38,7 @@ function ctrlBtnStyle(danger) {
   };
 }
 
-export default function VideoCall({ projectId, onOpenActivities, startSignal, preferredMicId, preferredCamId }) {
+export default function VideoCall({ projectId, onOpenActivities, startSignal, preferredMicId, preferredCamId, joinMicMuted, joinCamOff }) {
   const [inCall, setInCall] = useState(false);
   const [status, setStatus] = useState("Not connected");
   const [micOff, setMicOff] = useState(false);
@@ -172,6 +172,18 @@ export default function VideoCall({ projectId, onOpenActivities, startSignal, pr
       const micTrack = stream.getAudioTracks()[0];
       if (camTrack) setSelectedCamId(camTrack.getSettings().deviceId || "");
       if (micTrack) setSelectedMicId(micTrack.getSettings().deviceId || "");
+      // "Join with camera off / mic muted" preferences (Preferences → Voice
+      // & Video) — disable the tracks right away rather than requesting a
+      // stream without them, so switching either back on mid-call doesn't
+      // need to re-request media.
+      if (joinCamOff && camTrack) {
+        camTrack.enabled = false;
+        setCamOff(true);
+      }
+      if (joinMicMuted && micTrack) {
+        micTrack.enabled = false;
+        setMicOff(true);
+      }
     } catch (err) {
       setStatus("Camera/mic permission denied");
       setInCall(false);
@@ -350,49 +362,25 @@ export default function VideoCall({ projectId, onOpenActivities, startSignal, pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startSignal]);
 
-  return (
-    <div ref={callFrameRef} style={{ border: "1px solid var(--s-border)", background: "var(--s-bg-side)", marginBottom: 20 }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          padding: "10px 14px",
-          borderBottom: inCall ? "1px solid var(--s-border)" : "none",
-        }}
-      >
-        <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: "var(--s-text-3)" }}>
-          {status}
-        </span>
-        {!inCall ? (
-          <button
-            onClick={startCall}
-            style={{
-              marginLeft: "auto",
-              padding: "7px 14px",
-              background: "#5fbf8f",
-              color: "#0a2419",
-              border: "none",
-              borderRadius: 20,
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Start meeting
-          </button>
-        ) : (
-          <button
-            onClick={endCall}
-            style={{ marginLeft: "auto", background: "transparent", border: "none", color: "var(--s-text-3)", fontSize: 18, cursor: "pointer" }}
-          >
-            ×
-          </button>
-        )}
-      </div>
+  // No meeting in progress and nothing pending — render nothing at all.
+  // Starting a meeting now lives in the chat composer's "+" menu ("Start a
+  // meeting"), so there's no need for a persistent bar sitting above the
+  // chat just to hold a single button.
+  if (!inCall) return null;
 
-      {inCall && (
-        <>
-          <div style={{ position: "relative", width: "100%", height: 320, background: "#000" }}>
+  return (
+    <div
+      ref={callFrameRef}
+      style={{
+        border: "1px solid var(--s-border)",
+        background: "var(--s-bg-side)",
+        marginBottom: 20,
+        display: "flex",
+        flexDirection: "column",
+        height: isFullscreen ? "100vh" : "auto",
+      }}
+    >
+      <div style={{ position: "relative", width: "100%", flex: isFullscreen ? "1 1 auto" : "none", height: isFullscreen ? "auto" : 320, minHeight: 0, background: "#000" }}>
             <video
               ref={remoteVideoRef}
               autoPlay
@@ -417,8 +405,23 @@ export default function VideoCall({ projectId, onOpenActivities, startSignal, pr
                 transform: "scaleX(-1)",
               }}
             />
+            <span
+              style={{
+                position: "absolute",
+                top: 10,
+                left: 10,
+                padding: "4px 10px",
+                borderRadius: 999,
+                background: "rgba(0,0,0,0.55)",
+                color: "#fff",
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 11,
+              }}
+            >
+              {status}
+            </span>
           </div>
-          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 14, padding: 12, position: "relative", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 14, padding: 12, position: "relative", flexWrap: "wrap", flex: "none" }}>
             <button onClick={toggleMic} style={ctrlBtnStyle(micOff)} aria-label="Toggle microphone">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
@@ -513,7 +516,7 @@ export default function VideoCall({ projectId, onOpenActivities, startSignal, pr
             </button>
 
             {onOpenActivities && (
-              <button onClick={onOpenActivities} style={ctrlBtnStyle(false)} aria-label="Open Activities" title="Whiteboard & retro board">
+              <button onClick={onOpenActivities} style={ctrlBtnStyle(false)} aria-label="Open whiteboard" title="Whiteboard">
                 <IconSparkle size={16} />
               </button>
             )}
@@ -536,8 +539,6 @@ export default function VideoCall({ projectId, onOpenActivities, startSignal, pr
               </svg>
             </button>
           </div>
-        </>
-      )}
     </div>
   );
 }
