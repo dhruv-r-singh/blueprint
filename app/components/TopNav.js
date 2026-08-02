@@ -53,6 +53,12 @@ export default function TopNav({ user, extraLink }) {
     if (href === pathname) e.preventDefault();
   }
 
+  /** Plain imperative nav for the dropdown menu items — bypasses next/link's own click handling entirely (no dependency on it not being intercepted/prevented by anything else on the page), closes the menu first so nothing can render on top of the click. */
+  function navTo(href) {
+    setOpenMenu(null);
+    if (href !== pathname) router.push(href);
+  }
+
   // TopNav mounts on every signed-in page, so this is the one place that
   // reliably covers "the app is open" for the online/offline presence
   // heartbeat (see lib/presence.js).
@@ -163,21 +169,21 @@ export default function TopNav({ user, extraLink }) {
         )}
 
         {open && (
-          <div className="shell-nav-menu" onClick={(e) => e.stopPropagation()}>
+          <div className="shell-nav-menu" onClick={(e) => e.stopPropagation()} style={{ zIndex: 601 }}>
             <div className="shell-nav-menu-user">{user?.displayName || user?.email || "Account"}</div>
-            <Link href="/" className="shell-nav-menu-item" onClick={(e) => goTo(e, "/")}>
+            <button type="button" className="shell-nav-menu-item" onClick={() => navTo("/")}>
               Home
-            </Link>
-            <Link href="/profile" className="shell-nav-menu-item" onClick={(e) => goTo(e, "/profile")}>
+            </button>
+            <button type="button" className="shell-nav-menu-item" onClick={() => navTo("/profile")}>
               Profile
-            </Link>
-            <Link href="/account" className="shell-nav-menu-item" onClick={(e) => goTo(e, "/account")}>
+            </button>
+            <button type="button" className="shell-nav-menu-item" onClick={() => navTo("/account")}>
               Preferences
-            </Link>
+            </button>
             {extraLink && (
-              <Link href={extraLink.href} className="shell-nav-menu-item" onClick={(e) => goTo(e, extraLink.href)}>
+              <button type="button" className="shell-nav-menu-item" onClick={() => navTo(extraLink.href)}>
                 {extraLink.label}
-              </Link>
+              </button>
             )}
             <button type="button" className="shell-nav-menu-item danger" onClick={handleSignOut}>
               Sign out

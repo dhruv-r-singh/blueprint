@@ -35,11 +35,21 @@ export default function Mailbox({ user }) {
   useEffect(() => {
     if (!user?.uid) return;
     const q = query(collection(db, "messageRequests"), where("toUid", "==", user.uid));
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
-      setRequests(list);
-    });
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+        setRequests(list);
+      },
+      (err) => {
+        // Missing the messageRequests Firestore rule shows up as
+        // permission-denied here — fail quiet (empty mailbox) instead of
+        // ever taking the rest of the topbar down with it.
+        console.error("Mailbox listener failed:", err);
+        setRequests([]);
+      }
+    );
     return () => unsub();
   }, [user?.uid]);
 
