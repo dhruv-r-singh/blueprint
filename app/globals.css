@@ -440,6 +440,17 @@ body {
   color: var(--s-text-2);
   border-color: var(--s-text-3);
 }
+.shell-task-add-btn {
+  padding: 0 16px;
+  background: var(--s-amber);
+  color: var(--s-amber-ink);
+  border: none;
+  border-radius: 10px;
+  font-family: "DM Sans", sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
 
 /* matches */
 .shell-match-role-block {
@@ -560,6 +571,208 @@ body {
   font-size: 13px;
   cursor: pointer;
 }
+.shell-composer-plus {
+  width: 44px;
+  height: 100%;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--s-border);
+  color: var(--s-text-3);
+  font-size: 20px;
+  cursor: pointer;
+  flex: none;
+}
+.shell-composer-plus:hover {
+  color: var(--s-amber);
+}
+.shell-composer-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 210px;
+  background: var(--s-bg-elevated);
+  border: 1px solid var(--s-border);
+  border-radius: 12px;
+  padding: 8px;
+  z-index: 10;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.shell-composer-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--s-border);
+  padding: 12px 14px;
+}
+.shell-composer-extra input,
+.shell-composer-extra select {
+  flex: 1;
+  background: var(--s-bg-elevated);
+  border: 1px solid var(--s-border);
+  color: var(--s-text);
+  padding: 10px 12px;
+  font-size: 13.5px;
+  font-family: inherit;
+  border-radius: 8px;
+}
+.shell-composer-extra button[type="submit"] {
+  padding: 0 18px;
+  height: 38px;
+  background: var(--s-amber);
+  color: var(--s-amber-ink);
+  border: none;
+  border-radius: 8px;
+  font-family: "DM Sans", sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+.shell-composer-extra button[type="submit"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.shell-composer-extra button.ghost,
+button.ghost {
+  background: transparent;
+  border: none;
+  color: var(--s-text-3);
+  font-family: "DM Sans", sans-serif;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.shell-composer-extra button.ghost:hover,
+button.ghost:hover {
+  color: var(--s-text);
+}
+
+/* chat: attachments */
+.shell-attachment-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 8px 12px;
+  background: var(--s-bg-elevated);
+  border: 1px solid var(--s-border);
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--s-text);
+  font-size: 13px;
+  max-width: 100%;
+}
+.shell-attachment-card:hover {
+  border-color: var(--s-amber);
+}
+.shell-attachment-badge {
+  flex: none;
+  font-family: "DM Sans", sans-serif;
+  font-weight: 700;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: #fff;
+}
+.shell-attachment-badge.drive {
+  background: #1a73e8;
+}
+.shell-attachment-badge.github {
+  background: #24292e;
+}
+.shell-attachment-badge.link {
+  background: var(--s-text-3);
+}
+.shell-attachment-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* chat: polls */
+.shell-poll-card {
+  margin-top: 6px;
+  max-width: 340px;
+}
+.shell-poll-question {
+  font-family: "DM Sans", sans-serif;
+  font-weight: 600;
+  font-size: 13.5px;
+  margin-bottom: 8px;
+}
+.shell-poll-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  margin-bottom: 6px;
+  background: var(--s-bg-elevated);
+  border: 1px solid var(--s-border);
+  border-radius: 8px;
+  color: var(--s-text-2);
+  font-size: 13px;
+  cursor: pointer;
+  overflow: hidden;
+  text-align: left;
+}
+.shell-poll-option.voted {
+  border-color: var(--s-amber);
+  color: var(--s-text);
+}
+.shell-poll-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(224, 163, 57, 0.16);
+  transition: width 0.2s ease;
+}
+.shell-poll-option-label,
+.shell-poll-option-count {
+  position: relative;
+}
+.shell-poll-option-count {
+  font-family: "DM Sans", sans-serif;
+  font-weight: 700;
+  color: var(--s-amber);
+  flex: none;
+}
+
+/* chat: task references */
+.shell-taskref-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 8px 12px;
+  background: var(--s-bg-elevated);
+  border: 1px solid var(--s-border);
+  border-radius: 10px;
+  color: var(--s-text);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.shell-taskref-card:hover {
+  border-color: var(--s-amber);
+}
+.shell-taskref-label {
+  font-family: "DM Sans", sans-serif;
+  font-weight: 700;
+  font-size: 10px;
+  color: var(--s-amber);
+  text-transform: uppercase;
+}
+.shell-taskref-status {
+  margin-left: auto;
+  font-family: "DM Sans", sans-serif;
+  font-size: 10px;
+  color: var(--s-text-3);
+  background: var(--s-bg-hover);
+  padding: 2px 8px;
+  border-radius: 9px;
+}
 
 /* card + auth buttons reused on sign-in and create-project screens */
 .shell-card {
@@ -610,4 +823,42 @@ body {
   font-size: 14.5px;
   padding: 12px 14px;
   border-radius: 9px;
+}
+
+/* autocomplete dropdown (role titles, skills) */
+.ac-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--s-bg-elevated, #2f3036);
+  border: 1px solid var(--s-border, #35363c);
+  border-radius: 10px;
+  overflow: hidden;
+  z-index: 20;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.ac-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  color: var(--s-text-2, #9a9ba1);
+  cursor: pointer;
+}
+.ac-row.active,
+.ac-row:hover {
+  background: var(--s-bg-hover, #2a2b30);
+  color: var(--s-text, #e7e8ea);
+}
+.ac-sub {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--s-amber, #e0a339);
+  flex: none;
 }

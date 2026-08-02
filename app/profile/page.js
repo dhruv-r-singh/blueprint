@@ -5,6 +5,8 @@ import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "../../lib/firebase";
+import { searchSkills } from "../../lib/skillsCatalog";
+import Autocomplete from "../components/Autocomplete";
 
 export default function ProfilePage() {
   const [user, setUser] = useState(undefined);
@@ -45,9 +47,10 @@ export default function ProfilePage() {
     }
   }
 
-  function addSkill() {
-    if (!newSkill.trim()) return;
-    const next = [...skills, newSkill.trim()];
+  function addSkill(skill) {
+    const value = (skill ?? newSkill).trim();
+    if (!value || skills.includes(value)) return;
+    const next = [...skills, value];
     setSkills(next);
     setNewSkill("");
     saveProfile(next, headline);
@@ -62,8 +65,11 @@ export default function ProfilePage() {
   return (
     <div className="shell">
       <div className="shell-topbar">
-        <Link href="/dashboard" className="shell-topbar-right">
-          <span className="shell-pname">← Dashboard</span>
+        <Link href="/" className="shell-topbar-right">
+          <span className="shell-pname">← Back</span>
+        </Link>
+        <Link href="/account" className="shell-topbar-right" style={{ marginLeft: 8 }}>
+          <span className="shell-pname">Settings</span>
         </Link>
       </div>
 
@@ -133,23 +139,27 @@ export default function ProfilePage() {
               )}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <input
+              <Autocomplete
                 value={newSkill}
-                onChange={(e) => setNewSkill(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addSkill())}
+                onChange={setNewSkill}
+                search={(q) => searchSkills(q, skills)}
+                onSelect={(item) => addSkill(item)}
+                onEnter={(e) => (e.preventDefault(), addSkill())}
                 placeholder="Add a skill and press Enter"
-                style={{
+                style={{ flex: 1 }}
+                inputStyle={{
                   background: "var(--s-bg-side)",
                   border: "1px solid var(--s-border)",
                   color: "var(--s-text)",
                   padding: 10,
                   fontSize: 13,
-                  flex: 1,
+                  width: "100%",
                   borderRadius: 6,
+                  fontFamily: "inherit",
                 }}
               />
               <button
-                onClick={addSkill}
+                onClick={() => addSkill()}
                 style={{
                   padding: "10px 16px",
                   background: "var(--s-amber)",

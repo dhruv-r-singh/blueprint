@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "../../lib/firebase";
+import { generateInviteCode } from "../../lib/inviteCode";
 
 export default function CreateProjectPage() {
   const router = useRouter();
@@ -39,6 +40,7 @@ export default function CreateProjectPage() {
         ownerId: user.uid,
         ownerName: user.displayName || user.email || "Unknown",
         memberIds: [user.uid],
+        inviteCode: generateInviteCode(),
         createdAt: serverTimestamp(),
       });
       router.push(`/project/${ref.id}`);

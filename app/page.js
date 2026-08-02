@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
-import { collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
+import { collection, query, where, getDocs } from "firebase/firestore";
 import { auth, db, googleProvider, githubProvider, linkedinProvider, firebaseConfigured } from "../lib/firebase";
+import { describeAuthError } from "../lib/authErrors";
 
 export default function Page() {
   const router = useRouter();
@@ -23,25 +24,30 @@ export default function Page() {
 
   // Once signed in, skip the dashboard entirely — go straight into the
   // most recent project, or straight into project creation if there isn't one yet.
+  //
+  // Deliberately NOT using orderBy() + limit() here: that combined with the
+  // where("memberIds", ...) filter requires a Firestore composite index. If
+  // that index doesn't exist, the query throws, lands in the catch block
+  // below, and silently sends everyone to /create — even people who already
+  // have projects. Fetching all of the user's projects (cheap; a person has
+  // at most a handful) and sorting client-side avoids depending on an index
+  // that may not have been created in the Firebase console.
   useEffect(() => {
     if (!user) return;
     (async () => {
       try {
-        const q = query(
-          collection(db, "projects"),
-          where("memberIds", "array-contains", user.uid),
-          orderBy("createdAt", "desc"),
-          limit(1)
-        );
+        const q = query(collection(db, "projects"), where("memberIds", "array-contains", user.uid));
         const snap = await getDocs(q);
         if (!snap.empty) {
-          router.replace(`/project/${snap.docs[0].id}`);
+          const projects = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          projects.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+          router.replace(`/project/${projects[0].id}`);
         } else {
           router.replace("/create");
         }
       } catch (err) {
         console.error("Redirect lookup failed:", err);
-        router.replace("/create");
+        setError("Couldn't load your projects — " + (err.code || err.message || "try again"));
       }
     })();
   }, [user, router]);
@@ -55,7 +61,8 @@ export default function Page() {
         kind === "google" ? googleProvider : kind === "github" ? githubProvider : linkedinProvider;
       await signInWithPopup(auth, provider);
     } catch (err) {
-      setError("Sign-in failed — " + (err.code || "try again"));
+      const msg = describeAuthError(err);
+      if (msg) setError(msg);
     } finally {
       setPending(null);
     }
