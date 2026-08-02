@@ -14,6 +14,7 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../../lib/firebase";
 import { startPresenceHeartbeat } from "../../lib/presence";
 import FocusMode from "./FocusMode";
+import Mailbox from "./Mailbox";
 
 /** Picks black or white text for a given hex background, via standard relative-luminance. */
 function contrastInk(hex) {
@@ -110,6 +111,7 @@ export default function TopNav({ user, extraLink }) {
   }
 
   return (
+    <>
     <div className="shell-topbar">
       <Link
         href="/"
@@ -184,5 +186,7 @@ export default function TopNav({ user, extraLink }) {
         )}
       </div>
     </div>
+    <Mailbox user={user} />
+    </>
   );
 }

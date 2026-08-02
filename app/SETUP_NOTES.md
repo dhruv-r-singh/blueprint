@@ -447,9 +447,110 @@ helper (`app/components/FocusMode.js`) off `memberProfiles[uid].focusMode`.
 It's purely informational for now, like Slack's status — doesn't mute
 notifications or change behavior elsewhere while "Focusing."
 
+## Hosting at a custom domain (blueprint.dhruvrsingh.com)
+
+A subdomain is actually simpler than the earlier `dhruvrsingh.com/blueprint`
+subpath plan — no `basePath` in `next.config.js`, no rewrite rules, nothing
+in the app's own code changes at all. It's purely DNS plus two allowlists:
+
+1. **Vercel:** project → **Settings → Domains → Add** → type
+   `blueprint.dhruvrsingh.com` → Add. Vercel shows you a DNS record to
+   create (usually a CNAME pointing `blueprint` at `cname.vercel-dns.com`,
+   but use exactly what Vercel shows you).
+2. **DNS:** go to wherever `dhruvrsingh.com`'s DNS is managed (your
+   registrar, or Cloudflare/etc. if you moved it there) and add that
+   CNAME record. Propagation is usually minutes, sometimes a couple hours.
+   Vercel auto-issues the SSL certificate once it sees the record.
+3. **Firebase console → Authentication → Settings → Authorized domains →
+   Add domain** → `blueprint.dhruvrsingh.com`. Without this, Google/GitHub/
+   LinkedIn sign-in popups will fail on the new domain with a "this domain
+   isn't authorized" error.
+4. **Google Cloud console → APIs & Services → Credentials** → open the
+   second OAuth 2.0 Client ID (the one from "Drive/Calendar tokens now
+   refresh themselves" above, not Firebase's own) → **Authorized JavaScript
+   origins** → add `https://blueprint.dhruvrsingh.com`. This is the one
+   that's easy to forget since it's a separate client from Firebase Auth's
+   — Drive/Calendar connect would fail silently on the new domain without it.
+
+Nothing about Firebase's own `authDomain` changes — sign-in popups always
+route through `blueprint-drs.firebaseapp.com` no matter what domain the app
+itself is hosted at, so steps 3 and 4 above are the only auth-related
+changes a new domain ever needs.
+
+## Removing the Google sign-in "testing" restriction
+
+If only your own Google account can sign in and everyone else gets blocked
+or never sees the popup complete, that's the OAuth consent screen sitting in
+**Testing** mode — Google caps that at a manually-added allowlist of up to
+100 test users, which is meant for development, not real usage.
+
+1. [console.cloud.google.com](https://console.cloud.google.com) → same GCP
+   project as `blueprint-drs` → **APIs & Services → OAuth consent screen**.
+2. Next to the **Testing** status badge near the top, click **PUBLISH APP**,
+   then confirm. That's it — the test-user allowlist no longer applies, and
+   anyone with a Google account can sign in.
+
+One thing to expect afterward, not a blocker: this app requests Drive and
+Calendar scopes, which Google treats as "sensitive." Until the app goes
+through Google's formal verification review, new users will see a "Google
+hasn't verified this app" interstitial during sign-in, with an "Advanced →
+Go to Blueprint (unsafe)" link to click through — sign-in still completes
+fine, it's just an extra click. Verification (to make that warning go away
+entirely) needs a privacy policy URL and terms of service URL added to the
+consent screen, then a submission for review, which Google can take
+anywhere from a few days to a few weeks to process — worth doing eventually
+for a real launch, not needed just to let people sign up.
+
 ## Fonts
 
 Down to exactly two: **Raleway** for the "Blueprint" wordmark only
 (`.brand-wordmark` in `globals.css`), **DM Sans** for everything else. If you
 add new UI, use `font-family: "DM Sans", sans-serif` (or inherit — the body
 default is already DM Sans) and don't introduce a third typeface.
+
+## Message requests + mailbox
+
+A "Message" button now shows up in two places — on each candidate card in a
+project's Matches tab, and next to each teammate in the Team rail on the
+Team chat tab. Both open the same compose modal
+(`app/components/MessageRequestModal.js`): a subject + message, saved to a
+new top-level `messageRequests` collection rather than dropping straight
+into project chat, since the whole point is reaching someone you're not
+already teammates with.
+
+The bottom-right mailbox button (`app/components/Mailbox.js`, mounted once
+in `TopNav.js` so it's on every signed-in page) shows a red badge for how
+many of those are unread, and a panel to read them, for whoever's signed in.
+
+One thing worth knowing: candidates on the Matches tab are the seed/demo
+profiles from `SEED_CANDIDATES`, not real accounts — messaging one still
+saves a real Firestore doc (so there's a record of the outreach), but with
+`toUid: null`, so it can never show up in anyone's mailbox. There's no
+account behind it to deliver to. Messaging an actual teammate from the Team
+rail *does* have a real `toUid` and shows up in their mailbox for real —
+that's the one to use to actually test the notification badge.
+
+**New Firestore rule needed.** In Firebase console → **Firestore → Rules**,
+add a new top-level match block (a sibling of `match /projects/{projectId}`,
+not nested inside it):
+
+```
+match /messageRequests/{requestId} {
+  // Anyone signed in can send one, but only as themselves.
+  allow create: if request.auth != null
+    && request.resource.data.fromUid == request.auth.uid;
+  // Only the sender or the recipient can read a given request.
+  allow read: if request.auth != null
+    && (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid);
+  // Only the recipient can update one, and only to flip `read` to true —
+  // nothing else about the request is editable after it's sent.
+  allow update: if request.auth != null
+    && resource.data.toUid == request.auth.uid
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+}
+```
+
+No reply feature yet — the mailbox is read-only for now (mark-as-read
+happens automatically when you click a request open). If you want a reply
+box added, it's a small follow-up: another field or subcollection plus a
+form in `Mailbox.js`.

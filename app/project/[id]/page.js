@@ -40,9 +40,10 @@ import Autocomplete from "../../components/Autocomplete";
 import TopNav from "../../components/TopNav";
 import CADViewer, { guessCadKind } from "../../components/CADViewer";
 import GuidedTour from "../../components/GuidedTour";
+import MessageRequestModal from "../../components/MessageRequestModal";
 import VideoPlayer from "../../components/VideoPlayer";
 import Toggle from "../../components/Toggle";
-import { IconGear, IconMic, IconSparkle, IconLayout, IconCheckSquare, IconTarget, IconCalendar, IconChat, IconGithubMark, IconDriveMark, IconReply, IconReact, IconTranslate, IconSearch } from "../../components/icons";
+import { IconGear, IconMic, IconSparkle, IconLayout, IconCheckSquare, IconTarget, IconCalendar, IconChat, IconGithubMark, IconDriveMark, IconReply, IconReact, IconTranslate, IconSearch, IconMailbox } from "../../components/icons";
 import { focusModeInfo } from "../../components/FocusMode";
 import VideoCall from "./VideoCall";
 import { useAuthGate } from "../../../lib/useAuthGate";
@@ -74,6 +75,16 @@ const SEED_CANDIDATES = [
   { name: "Sam O.", headline: "Product designer · rapid prototyping", roleCodes: ["CAD", "HW"], skillTags: ["Fusion 360", "Injection molding"], match: 91 },
   { name: "Elena V.", headline: "Business · agtech outreach", roleCodes: ["BIZ"], skillTags: ["Partnerships", "Grant writing"], match: 85 },
   { name: "Maya R.", headline: "Mechanical engineering student", roleCodes: ["CAD"], skillTags: ["SolidWorks", "3D printing"], match: 76 },
+  { name: "Noah P.", headline: "Full-stack engineer · Next.js & Firebase", roleCodes: ["SW"], skillTags: ["Next.js", "Firebase", "TypeScript"], match: 97 },
+  { name: "Aisha K.", headline: "Embedded systems · robotics firmware", roleCodes: ["HW"], skillTags: ["C++", "STM32", "PCB design"], match: 82 },
+  { name: "Leo T.", headline: "Data scientist · NLP & LLM tooling", roleCodes: ["AI"], skillTags: ["Python", "LangChain", "NLP"], match: 89 },
+  { name: "Grace M.", headline: "UX researcher · usability testing", roleCodes: ["UX"], skillTags: ["Figma", "User interviews", "Prototyping"], match: 79 },
+  { name: "Devon R.", headline: "Growth marketer · early-stage startups", roleCodes: ["BIZ"], skillTags: ["Growth marketing", "Analytics", "Copywriting"], match: 71 },
+  { name: "Harper S.", headline: "Mechanical engineer · CAD & FEA", roleCodes: ["CAD"], skillTags: ["SolidWorks", "FEA", "GD&T"], match: 93 },
+  { name: "Tyler B.", headline: "Backend engineer · distributed systems", roleCodes: ["SW"], skillTags: ["Go", "Kubernetes", "PostgreSQL"], match: 68 },
+  { name: "Nina C.", headline: "Product designer · brand & UI systems", roleCodes: ["UX"], skillTags: ["Figma", "Design systems", "Illustration"], match: 87 },
+  { name: "Omar F.", headline: "Hardware engineer · power electronics", roleCodes: ["HW", "CAD"], skillTags: ["Altium", "Power systems", "Prototyping"], match: 63 },
+  { name: "Zoe W.", headline: "Biz dev · partnerships & fundraising", roleCodes: ["BIZ"], skillTags: ["Fundraising", "Pitch decks", "Sales"], match: 96 },
 ];
 
 const CHANNELS = [
@@ -213,6 +224,7 @@ export default function ProjectPage() {
   const [presenceTick, setPresenceTick] = useState(0); // bumps periodically so online/offline labels stay fresh
   const [replyingTo, setReplyingTo] = useState(null); // { id, senderName, text } | null
   const [chatSearch, setChatSearch] = useState("");
+  const [messageTarget, setMessageTarget] = useState(null); // { toUid, toLabel } | null — toUid is null for a seed candidate
   const [stagedAttachment, setStagedAttachment] = useState(null); // attachment fields waiting for Send, not yet posted
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [googleCalEvents, setGoogleCalEvents] = useState([]);
@@ -325,10 +337,15 @@ export default function ProjectPage() {
   useEffect(() => {
     if (tab !== "matches" || !user) return;
     (async () => {
+      // Backfills any SEED_CANDIDATES entries that aren't in Firestore yet
+      // (matched by name), instead of the old "only seed if the whole
+      // collection is empty" check — so adding new seed candidates later
+      // (like this round's 10) fills them in automatically on the next
+      // visit to Matches, without needing the existing ones wiped first.
       const snap = await getDocs(collection(db, "candidates"));
-      if (snap.empty) {
-        for (const c of SEED_CANDIDATES) await addDoc(collection(db, "candidates"), c);
-      }
+      const existingNames = new Set(snap.docs.map((d) => d.data().name));
+      const missing = SEED_CANDIDATES.filter((c) => !existingNames.has(c.name));
+      for (const c of missing) await addDoc(collection(db, "candidates"), c);
     })();
     const unsub = onSnapshot(collection(db, "candidates"), (snap) => {
       setCandidates(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -647,6 +664,22 @@ export default function ProjectPage() {
     ) : (
       <span key={i}>{part}</span>
     )));
+  }
+
+  /** Writes a "message request" — a subject + message that shows up in the recipient's Mailbox (see components/Mailbox.js), rather than dropping straight into project chat. `toUid` is null when the target is a seed candidate on Matches, not a real account — it still gets saved (as an outreach record on this project), it's just never delivered anywhere, since there's no real user behind it. */
+  async function sendMessageRequest({ toUid, toLabel, subject, message }) {
+    if (!user) return;
+    await addDoc(collection(db, "messageRequests"), {
+      toUid: toUid || null,
+      toLabel,
+      fromUid: user.uid,
+      fromName: user.displayName || user.email || "Unknown",
+      projectId: id,
+      subject,
+      message,
+      read: false,
+      createdAt: serverTimestamp(),
+    });
   }
 
   /** True if a message's visible text/caption/attachment title/sender name contains the search query (case-insensitive). */
@@ -1787,11 +1820,19 @@ export default function ProjectPage() {
                           )}
                         </div>
                         <div className="shell-cand-headline">{c.headline}</div>
-                        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 8 }}>
                           {(c.skillTags || []).map((s, si) => (
                             <span key={si} className="shell-mini-chip">{s}</span>
                           ))}
                         </div>
+                        <button
+                          type="button"
+                          className="shell-btn-outline"
+                          style={{ fontSize: 11.5, height: 28, padding: "0 12px" }}
+                          onClick={() => setMessageTarget({ toUid: null, toLabel: c.name })}
+                        >
+                          Message
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -2625,9 +2666,20 @@ export default function ProjectPage() {
                             )}
                             <span className={"shell-presence-dot" + (online ? " online" : "")} />
                           </span>
-                          <span style={{ fontSize: 12.5, color: online ? "var(--s-text)" : "var(--s-text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <span style={{ fontSize: 12.5, color: online ? "var(--s-text)" : "var(--s-text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
                             {name}
                           </span>
+                          {uid !== user?.uid && (
+                            <button
+                              type="button"
+                              onClick={() => setMessageTarget({ toUid: uid, toLabel: name })}
+                              title={`Message ${name}`}
+                              aria-label={`Message ${name}`}
+                              style={{ background: "transparent", border: "none", color: "var(--s-text-3)", cursor: "pointer", flex: "none", padding: 2, display: "flex" }}
+                            >
+                              <IconMailbox size={13} />
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -2904,6 +2956,17 @@ export default function ProjectPage() {
       )}
 
       {showTour && <GuidedTour steps={TOUR_STEPS} onDone={finishTour} />}
+
+      {messageTarget && (
+        <MessageRequestModal
+          toUid={messageTarget.toUid}
+          toLabel={messageTarget.toLabel}
+          onClose={() => setMessageTarget(null)}
+          onSend={({ subject, message }) =>
+            sendMessageRequest({ toUid: messageTarget.toUid, toLabel: messageTarget.toLabel, subject, message })
+          }
+        />
+      )}
     </div>
   );
 }
