@@ -17,7 +17,6 @@ import {
   serverTimestamp,
   arrayUnion,
   arrayRemove,
-  setDoc,
 } from "firebase/firestore";
 import { auth, db } from "../../../lib/firebase";
 import { searchRoleTitles } from "../../../lib/roleTitles";
@@ -211,9 +210,7 @@ export default function ProjectPage() {
     setBrowseError("");
     setBrowseItems([]);
     try {
-      const token = await ensureFreshGoogleToken(myIntegrations, (patch) =>
-        setDoc(doc(db, ...integrationsDocPath(user.uid)), patch, { merge: true })
-      );
+      const token = await ensureFreshGoogleToken(myIntegrations);
       const files = await listRecentDriveFiles(token);
       setBrowseItems(
         files.map((f) => ({ id: f.id, title: f.name, url: f.webViewLink, provider: "drive" }))
@@ -537,9 +534,27 @@ export default function ProjectPage() {
               <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 6 }}>
                 Brief
               </p>
-              <p className="shell-brief-text" style={{ marginBottom: 24 }}>
+              <p className="shell-brief-text" style={{ marginBottom: 16 }}>
                 {project.brief || "No brief yet."}
               </p>
+
+              {(project.driveFolderUrl || project.githubRepoUrl) && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}>
+                  {project.driveFolderUrl && (
+                    <a href={project.driveFolderUrl} target="_blank" rel="noopener noreferrer" className="shell-attachment-card">
+                      <span className="shell-attachment-badge drive">Drive</span>
+                      <span className="shell-attachment-title">Project folder</span>
+                    </a>
+                  )}
+                  {project.githubRepoUrl && (
+                    <a href={project.githubRepoUrl} target="_blank" rel="noopener noreferrer" className="shell-attachment-card">
+                      <span className="shell-attachment-badge github">GitHub</span>
+                      <span className="shell-attachment-title">{project.githubRepoFullName || "Repository"}</span>
+                    </a>
+                  )}
+                </div>
+              )}
+
               <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
                 Roles needed
               </p>

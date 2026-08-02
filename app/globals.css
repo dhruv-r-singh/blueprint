@@ -815,6 +815,65 @@ button.ghost:hover {
   opacity: 0.9;
 }
 
+/* on/off switch (project creation: Drive folder / GitHub repo, etc.) */
+.toggle {
+  position: relative;
+  width: 40px;
+  height: 24px;
+  border-radius: 12px;
+  border: none;
+  background: var(--s-bg-elevated, #2f3036);
+  border: 1px solid var(--s-border, #35363c);
+  cursor: pointer;
+  flex: none;
+  padding: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.toggle.on {
+  background: var(--s-amber, #e0a339);
+  border-color: var(--s-amber, #e0a339);
+}
+.toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--s-text-2, #9a9ba1);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.toggle.on .toggle-knob {
+  transform: translateX(16px);
+  background: var(--s-amber-ink, #241703);
+}
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--s-bg-elevated);
+  border: 1px solid var(--s-border);
+  border-radius: 10px;
+}
+.toggle-row-label {
+  flex: 1;
+}
+.toggle-row-title {
+  font-family: "DM Sans", sans-serif;
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.toggle-row-hint {
+  font-size: 11.5px;
+  color: var(--s-text-3);
+  margin-top: 2px;
+}
+
 .shell-input {
   background: var(--s-bg-elevated);
   border: 1px solid var(--s-border);

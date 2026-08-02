@@ -58,47 +58,39 @@ This sits alongside (not instead of) the existing
 `allow update, delete: if request.auth != null && request.auth.uid in resource.data.memberIds;`
 rule — Firestore rules are additive, so both can be true.
 
-## Google Drive + GitHub integration (chat attachments)
+## Google Drive + GitHub integration (chat attachments, project creation)
 
-This needs OAuth app credentials you create yourself — I can't generate
-these. Nothing breaks if you skip this section; the "Connect" buttons on
-`/account` just stay disabled and chat attachments fall back to pasting a
-raw link.
+This now piggybacks on the same "Continue with Google" / "Continue with
+GitHub" sign-in you already have — no separate OAuth app, no client
+ID/secret, no extra buttons. Signing in (or connecting/re-linking an
+account from `/account`) with Google also grants Drive access; doing the
+same with GitHub also grants repo access. That's implemented in
+`lib/firebase.js` (the added scopes) and `lib/integrations.js`
+(`saveGoogleCredential` / `saveGithubCredential`, called right after
+`signInWithPopup`/`linkWithPopup` resolves).
 
-### Google Drive
+There's still one real setup step, and one real limitation:
 
-1. In [Google Cloud Console](https://console.cloud.google.com/), create (or
-   reuse) a project, then **APIs & Services → Library** → enable the
-   **Google Drive API**.
-2. **APIs & Services → OAuth consent screen**: set it up (External is fine
-   for testing), add the scope `.../auth/drive.file`, and add your own
-   Google account under **Test users** if the app is in "Testing" mode
-   (otherwise sign-in will be blocked).
-3. **APIs & Services → Credentials → Create Credentials → OAuth client ID**,
-   type **Web application**. Add these to **Authorized redirect URIs**:
-   - `http://localhost:3000/account` (local dev)
-   - `https://blueprint-app-dhruv-raj-singh-s-projects.vercel.app/account`
-     (production — from `electron/main.js`'s `APP_URL`; swap in your actual
-     domain if that's changed)
-4. Copy the **Client ID** and **Client secret**, and set these environment
-   variables (Vercel → Settings → Environment Variables, and `.env.local`
-   for dev):
-   - `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
-   - `GOOGLE_CLIENT_SECRET`
+- **Google Cloud setup (one-time):** the `drive.file` scope has to be
+  enabled on the Google Cloud project behind your Firebase project (find it
+  in [console.cloud.google.com](https://console.cloud.google.com/), same
+  project as `blueprint-drs`). Go to **APIs & Services → Library** and
+  enable the **Google Drive API**, then **APIs & Services → OAuth consent
+  screen** and add the scope `.../auth/drive.file`. If the consent screen
+  is in "Testing" mode, also add your own Google account under **Test
+  users**, or the whole sign-in will be blocked. GitHub needs nothing
+  extra — whatever OAuth App you already set up for "Continue with GitHub"
+  in Firebase console just gets asked for the `repo` scope now too.
+- **Drive tokens expire in ~1hr, with no silent refresh.** Firebase's
+  client SDK doesn't expose a refresh token for this flow, so once a
+  Drive-backed action fails with "connection expired," the fix is
+  re-signing in with Google (or clicking "Refresh Drive access" on
+  `/account`) — there's no background renewal. GitHub tokens don't expire,
+  so that one's set-and-forget.
 
-### GitHub
-
-1. [GitHub Developer Settings](https://github.com/settings/developers) →
-   **OAuth Apps → New OAuth App**.
-2. Homepage URL: your app's URL. **Authorization callback URL**:
-   - `http://localhost:3000/account` (local dev — you'll need a second
-     OAuth App, or just swap this value while developing, since GitHub
-     OAuth Apps only support one callback URL each)
-   - `https://blueprint-app-dhruv-raj-singh-s-projects.vercel.app/account`
-     (production)
-3. Copy the **Client ID**, generate a **Client secret**, and set:
-   - `NEXT_PUBLIC_GITHUB_CLIENT_ID`
-   - `GITHUB_CLIENT_SECRET`
+Nothing breaks if you skip the Google Cloud step — the Drive-specific
+buttons/toggles just won't do anything useful until it's done (Drive API
+calls will fail with a permission error, surfaced in the UI).
 
 ### Firestore rule — lock down the token storage
 
@@ -119,8 +111,8 @@ match /profiles/{uid} {
 }
 ```
 
-Without this rule, the "Connect Google Drive"/"Connect GitHub" writes in
-`/account` will fail with `permission-denied`.
+Without this rule, saving the Drive/GitHub token after sign-in (or from
+`/account`) will fail with `permission-denied`.
 
 ## Fonts
 

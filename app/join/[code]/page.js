@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { onAuthStateChanged, signInWithPopup } from "firebase/auth";
-import { collection, query, where, getDocs, doc, updateDoc, arrayUnion } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, updateDoc, setDoc, arrayUnion } from "firebase/firestore";
 import { auth, db, googleProvider, githubProvider, linkedinProvider } from "../../../lib/firebase";
 import { describeAuthError } from "../../../lib/authErrors";
+import { integrationsDocPath, saveGoogleCredential, saveGithubCredential } from "../../../lib/integrations";
 
 export default function JoinPage() {
   const { code } = useParams();
@@ -55,7 +56,14 @@ export default function JoinPage() {
     setPending(kind);
     try {
       const provider = kind === "google" ? googleProvider : kind === "github" ? githubProvider : linkedinProvider;
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      try {
+        const saveFn = (patch) => setDoc(doc(db, ...integrationsDocPath(result.user.uid)), patch, { merge: true });
+        if (kind === "google") await saveGoogleCredential(result, saveFn);
+        else if (kind === "github") await saveGithubCredential(result, saveFn);
+      } catch (err) {
+        console.error("Couldn't save Drive/GitHub credential:", err);
+      }
     } catch (err) {
       const msg = describeAuthError(err);
       if (msg) setError(msg);
