@@ -6,7 +6,8 @@ import { onAuthStateChanged, signInWithPopup } from "firebase/auth";
 import { collection, query, where, getDocs, doc, updateDoc, setDoc, arrayUnion } from "firebase/firestore";
 import { auth, db, googleProvider, githubProvider, linkedinProvider } from "../../../lib/firebase";
 import { describeAuthError } from "../../../lib/authErrors";
-import { integrationsDocPath, saveGoogleCredential, saveGithubCredential } from "../../../lib/integrations";
+import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePublicIdentity } from "../../../lib/integrations";
+import MfaChallenge from "../../components/MfaChallenge";
 
 export default function JoinPage() {
   const { code } = useParams();
@@ -16,6 +17,8 @@ export default function JoinPage() {
   const [error, setError] = useState("");
   const [project, setProject] = useState(null);
   const [pending, setPending] = useState(null);
+  const [mfaError, setMfaError] = useState(null);
+  const [lastKind, setLastKind] = useState(null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
@@ -51,25 +54,51 @@ export default function JoinPage() {
     })();
   }, [user, code, router]);
 
+  async function handleSignedInResult(result, kind) {
+    try {
+      const saveFn = (patch) => setDoc(doc(db, ...integrationsDocPath(result.user.uid)), patch, { merge: true });
+      const savePublicFn = (patch) => setDoc(doc(db, "profiles", result.user.uid), patch, { merge: true });
+      if (kind === "google") await saveGoogleCredential(result, saveFn);
+      else if (kind === "github") await saveGithubCredential(result, saveFn, savePublicFn);
+      await savePublicIdentity(result.user.uid, result.user, savePublicFn);
+    } catch (err) {
+      console.error("Couldn't save Drive/GitHub credential:", err);
+    }
+  }
+
   async function handleSignIn(kind) {
     setError("");
     setPending(kind);
     try {
       const provider = kind === "google" ? googleProvider : kind === "github" ? githubProvider : linkedinProvider;
       const result = await signInWithPopup(auth, provider);
-      try {
-        const saveFn = (patch) => setDoc(doc(db, ...integrationsDocPath(result.user.uid)), patch, { merge: true });
-        if (kind === "google") await saveGoogleCredential(result, saveFn);
-        else if (kind === "github") await saveGithubCredential(result, saveFn);
-      } catch (err) {
-        console.error("Couldn't save Drive/GitHub credential:", err);
-      }
+      await handleSignedInResult(result, kind);
     } catch (err) {
+      if (err.code === "auth/multi-factor-auth-required") {
+        setLastKind(kind);
+        setMfaError(err);
+        return;
+      }
       const msg = describeAuthError(err);
       if (msg) setError(msg);
     } finally {
       setPending(null);
     }
+  }
+
+  async function handleMfaResolved(result) {
+    setMfaError(null);
+    await handleSignedInResult(result, lastKind);
+  }
+
+  if (mfaError) {
+    return (
+      <div className="shell">
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <MfaChallenge error={mfaError} onResolved={handleMfaResolved} onCancel={() => setMfaError(null)} />
+        </div>
+      </div>
+    );
   }
 
   return (

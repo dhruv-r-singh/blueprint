@@ -88,10 +88,17 @@ body {
   --s-text-2: #9a9ba1;
   --s-text-3: #6f7078;
   --s-amber: #e0a339;
+  --s-amber-2: #f0c169;
   --s-amber-ink: #241703;
   --s-green: #5fbf8f;
+  --s-radius-sm: 8px;
+  --s-radius-md: 12px;
+  --s-radius-lg: 18px;
+  --s-glow-amber: 0 0 0 1px rgba(224, 163, 57, 0.35), 0 4px 24px rgba(224, 163, 57, 0.22);
+  --s-glow-soft: 0 8px 30px rgba(0, 0, 0, 0.35);
 
-  background: var(--s-bg-main);
+  background: radial-gradient(1200px 600px at 12% -10%, rgba(224, 163, 57, 0.07), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(95, 191, 143, 0.05), transparent 55%), var(--s-bg-main);
   color: var(--s-text);
   font-family: "DM Sans", sans-serif;
   font-size: 15px;
@@ -104,7 +111,7 @@ body {
 .shell-topbar {
   height: 60px;
   flex: none;
-  background: var(--s-bg-side);
+  background: linear-gradient(90deg, var(--s-bg-side) 0%, var(--s-bg-main) 160%);
   border-bottom: 1px solid var(--s-border);
   display: flex;
   align-items: center;
@@ -137,6 +144,93 @@ body {
   font-size: 11px;
   flex: none;
 }
+
+/* consolidated hamburger nav (TopNav.js) */
+.shell-hamburger {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.shell-hamburger span {
+  display: block;
+  width: 16px;
+  height: 2px;
+  background: var(--s-text-2);
+  border-radius: 2px;
+}
+.shell-nav-menu {
+  position: absolute;
+  top: 46px;
+  right: 0;
+  background: var(--s-bg-side);
+  border: 1px solid var(--s-border);
+  border-radius: 12px;
+  padding: 6px;
+  min-width: 200px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  z-index: 50;
+}
+.shell-nav-menu-user {
+  font-family: "DM Sans", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--s-text-3);
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid var(--s-border);
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shell-nav-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--s-text);
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.shell-nav-menu-item:hover {
+  background: var(--s-bg-hover);
+}
+.shell-nav-menu-item.danger {
+  color: #e5534b;
+}
+
+/* online/offline presence dot, overlaid on an avatar */
+.shell-presence-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.shell-presence-dot {
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--s-bg-side);
+  background: var(--s-text-3);
+}
+.shell-presence-dot.online {
+  background: var(--s-green);
+  box-shadow: 0 0 6px rgba(95, 191, 143, 0.7);
+}
 .shell-pname {
   font-size: 14px;
   color: var(--s-text-2);
@@ -150,7 +244,7 @@ body {
 
 .shell-sidebar {
   width: 268px;
-  background: var(--s-bg-side);
+  background: linear-gradient(180deg, var(--s-bg-side) 0%, var(--s-bg-main) 220%);
   flex: none;
   display: flex;
   flex-direction: column;
@@ -171,8 +265,8 @@ body {
 .shell-swatch {
   width: 34px;
   height: 34px;
-  border-radius: 9px;
-  background: var(--s-amber);
+  border-radius: var(--s-radius-sm);
+  background: linear-gradient(135deg, var(--s-amber-2), var(--s-amber));
   color: var(--s-amber-ink);
   display: flex;
   align-items: center;
@@ -181,6 +275,7 @@ body {
   font-weight: 700;
   font-size: 13px;
   flex: none;
+  box-shadow: 0 2px 12px rgba(224, 163, 57, 0.25);
 }
 .shell-switcher-name {
   font-family: "DM Sans", sans-serif;
@@ -277,8 +372,9 @@ body {
   top: 10px;
   bottom: 10px;
   width: 3px;
-  background: var(--s-amber);
+  background: linear-gradient(180deg, var(--s-amber-2), var(--s-amber));
   border-radius: 2px;
+  box-shadow: 0 0 10px rgba(224, 163, 57, 0.55);
 }
 .shell-fill-pill {
   margin-left: auto;
@@ -406,12 +502,17 @@ body {
 .shell-task-card {
   border: 1px solid var(--s-border);
   border-left: 4px solid var(--role-color, var(--s-amber));
-  background: var(--s-bg-side);
-  border-radius: 10px;
+  background: linear-gradient(160deg, var(--s-bg-side) 0%, var(--s-bg-elevated) 220%);
+  border-radius: var(--s-radius-md);
   padding: 12px 12px 12px 14px;
   margin-bottom: 10px;
   font-size: 13.5px;
   cursor: grab;
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+.shell-task-card:hover {
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px);
 }
 .shell-task-role {
   font-family: "DM Sans", sans-serif;
@@ -423,6 +524,25 @@ body {
   border-radius: 7px;
   display: inline-block;
   margin-bottom: 7px;
+}
+.shell-task-deadline {
+  display: inline-block;
+  margin-top: 8px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 7px;
+  border-radius: 6px;
+  color: var(--s-text-2);
+  background: var(--s-bg-elevated);
+}
+.shell-task-deadline.soon {
+  color: #b8860b;
+  background: rgba(212, 163, 79, 0.16);
+}
+.shell-task-deadline.overdue {
+  color: #e5534b;
+  background: rgba(229, 83, 75, 0.14);
 }
 .shell-add-task {
   padding: 10px 12px;
@@ -442,14 +562,20 @@ body {
 }
 .shell-task-add-btn {
   padding: 0 16px;
-  background: var(--s-amber);
+  background: linear-gradient(135deg, var(--s-amber-2), var(--s-amber));
   color: var(--s-amber-ink);
   border: none;
-  border-radius: 10px;
+  border-radius: var(--s-radius-md);
   font-family: "DM Sans", sans-serif;
   font-weight: 700;
   font-size: 13px;
   cursor: pointer;
+  box-shadow: 0 2px 14px rgba(224, 163, 57, 0.25);
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+.shell-task-add-btn:hover {
+  box-shadow: 0 2px 20px rgba(224, 163, 57, 0.4);
+  transform: translateY(-1px);
 }
 
 /* matches */
@@ -518,12 +644,13 @@ body {
 /* chat */
 .shell-chat-panel {
   border: 1px solid var(--s-border);
-  background: var(--s-bg-side);
+  background: linear-gradient(165deg, var(--s-bg-side) 0%, var(--s-bg-main) 160%);
   height: 420px;
   display: flex;
   flex-direction: column;
-  border-radius: 12px;
+  border-radius: var(--s-radius-lg);
   overflow: hidden;
+  box-shadow: var(--s-glow-soft);
 }
 .shell-msgs {
   flex: 1;
@@ -563,13 +690,52 @@ body {
 }
 .shell-composer button {
   padding: 0 22px;
-  background: var(--s-amber);
+  background: linear-gradient(135deg, var(--s-amber-2), var(--s-amber));
   color: var(--s-amber-ink);
   border: none;
   font-family: "DM Sans", sans-serif;
   font-weight: 700;
   font-size: 13px;
   cursor: pointer;
+}
+.shell-mic-btn {
+  padding: 0 16px !important;
+  background: transparent !important;
+  color: var(--s-text-2) !important;
+  font-size: 16px !important;
+  border-left: 1px solid var(--s-border);
+}
+.shell-mic-btn:hover {
+  color: var(--s-amber) !important;
+}
+.shell-recording-bar {
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+}
+.shell-recording-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #e5534b;
+  flex: none;
+  animation: shell-recording-pulse 1.1s ease-in-out infinite;
+}
+@keyframes shell-recording-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.shell-retro-note {
+  background: var(--s-bg-side);
+  border: 1px solid var(--s-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.shell-voice-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
 }
 .shell-composer-plus {
   width: 44px;
@@ -681,6 +847,78 @@ button.ghost:hover {
 .shell-attachment-badge.link {
   background: var(--s-text-3);
 }
+.shell-attachment-badge.upload {
+  background: var(--s-amber);
+  color: #1a1a1a;
+}
+.shell-attachment-meta {
+  font-size: 10px;
+  color: var(--s-text-3);
+  margin-left: 2px;
+}
+
+/* chat: message reactions */
+.shell-reactions-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.shell-reaction-chip {
+  font-family: "DM Sans", sans-serif;
+  font-size: 12px;
+  background: var(--s-bg-elevated);
+  border: 1px solid var(--s-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  cursor: pointer;
+  color: var(--s-text-2);
+}
+.shell-reaction-chip.mine {
+  border-color: var(--s-amber);
+  background: rgba(212, 163, 79, 0.12);
+}
+.shell-reaction-add {
+  font-family: "DM Sans", sans-serif;
+  font-size: 12px;
+  background: transparent;
+  border: 1px dashed var(--s-border);
+  border-radius: 999px;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--s-text-3);
+}
+.shell-reaction-add:hover {
+  color: var(--s-text);
+  border-color: var(--s-text-3);
+}
+.shell-reaction-picker {
+  position: absolute;
+  bottom: 26px;
+  left: 0;
+  display: flex;
+  gap: 4px;
+  background: var(--s-bg-side);
+  border: 1px solid var(--s-border);
+  border-radius: 10px;
+  padding: 6px;
+  z-index: 20;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+.shell-reaction-picker button {
+  background: transparent;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.shell-reaction-picker button:hover {
+  background: var(--s-bg-elevated);
+}
 .shell-attachment-title {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -776,10 +1014,11 @@ button.ghost:hover {
 
 /* card + auth buttons reused on sign-in and create-project screens */
 .shell-card {
-  background: var(--s-bg-side);
+  background: linear-gradient(165deg, var(--s-bg-side) 0%, var(--s-bg-main) 130%);
   border: 1px solid var(--s-border);
-  border-radius: 16px;
+  border-radius: var(--s-radius-lg);
   padding: 40px;
+  box-shadow: var(--s-glow-soft);
 }
 .shell-auth-btn {
   display: flex;
@@ -793,26 +1032,30 @@ button.ghost:hover {
   font-family: "DM Sans", sans-serif;
   font-weight: 500;
   font-size: 14.5px;
-  border-radius: 10px;
+  border-radius: var(--s-radius-md);
   margin-bottom: 10px;
   cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
 }
 .shell-auth-btn:hover {
   background: var(--s-bg-hover);
+  transform: translateY(-1px);
 }
 .shell-auth-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  transform: none;
 }
 .shell-auth-btn.primary {
-  background: var(--s-amber);
+  background: linear-gradient(135deg, var(--s-amber-2), var(--s-amber));
   color: var(--s-amber-ink);
   border: none;
   font-weight: 700;
   justify-content: center;
+  box-shadow: var(--s-glow-amber);
 }
 .shell-auth-btn.primary:hover {
-  opacity: 0.9;
+  opacity: 0.94;
 }
 
 /* on/off switch (project creation: Drive folder / GitHub repo, etc.) */
@@ -830,8 +1073,9 @@ button.ghost:hover {
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 .toggle.on {
-  background: var(--s-amber, #e0a339);
+  background: linear-gradient(135deg, var(--s-amber-2, #f0c169), var(--s-amber, #e0a339));
   border-color: var(--s-amber, #e0a339);
+  box-shadow: 0 0 10px rgba(224, 163, 57, 0.4);
 }
 .toggle:disabled {
   opacity: 0.45;

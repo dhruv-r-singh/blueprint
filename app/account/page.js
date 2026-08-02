@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import TopNav from "../components/TopNav";
 import {
   onAuthStateChanged,
   signOut,
@@ -9,11 +9,22 @@ import {
   reauthenticateWithPopup,
   unlink,
   updateProfile,
+  PhoneMultiFactorGenerator,
 } from "firebase/auth";
 import { doc, onSnapshot, setDoc } from "firebase/firestore";
 import { auth, db, googleProvider, githubProvider, linkedinProvider } from "../../lib/firebase";
 import { describeAuthError } from "../../lib/authErrors";
-import { integrationsDocPath, saveGoogleCredential, saveGithubCredential } from "../../lib/integrations";
+import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePublicIdentity } from "../../lib/integrations";
+import { useAuthGate } from "../../lib/useAuthGate";
+import { qrCodeUrl } from "../../lib/inviteCode";
+import {
+  enrolledFactors,
+  startPhoneEnrollment,
+  confirmPhoneEnrollment,
+  startTotpEnrollment,
+  confirmTotpEnrollment,
+  unenrollFactor,
+} from "../../lib/mfa";
 
 const PROVIDERS = [
   {
@@ -62,14 +73,27 @@ export default function AccountSettingsPage() {
   const [displayName, setDisplayName] = useState("");
   const [savingName, setSavingName] = useState(false);
   const [integrations, setIntegrations] = useState(null);
+  const [mfaFactors, setMfaFactors] = useState([]);
+  const [mfaMode, setMfaMode] = useState(null); // null | "phone" | "totp"
+  const [mfaStep, setMfaStep] = useState("start"); // start | code
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaVerificationId, setMfaVerificationId] = useState("");
+  const [totpSecret, setTotpSecret] = useState(null);
+  const [totpQrUri, setTotpQrUri] = useState("");
+  const [mfaBusy, setMfaBusy] = useState(false);
+  const [mfaError, setMfaErrorMsg] = useState("");
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setDisplayName(u?.displayName || "");
+      setMfaFactors(u ? enrolledFactors(u) : []);
     });
     return () => unsub();
   }, []);
+
+  useAuthGate(user);
 
   useEffect(() => {
     if (!user) return;
@@ -107,15 +131,17 @@ export default function AccountSettingsPage() {
         : await linkWithPopup(auth.currentUser, entry.provider);
       setUser({ ...auth.currentUser });
 
+      const savePublicFn = (patch) => setDoc(doc(db, "profiles", user.uid), patch, { merge: true });
       if (entry.integration === "drive") {
         const got = await saveGoogleCredential(result, saveFn());
-        setNotice(got ? "Google Drive connected." : "Signed in with Google, but Drive access wasn't granted — try again and allow the Drive permission.");
+        setNotice(got ? "Google Drive & Calendar connected." : "Signed in with Google, but Drive/Calendar access wasn't granted — try again and allow the permissions.");
       } else if (entry.integration === "github") {
-        const got = await saveGithubCredential(result, saveFn());
+        const got = await saveGithubCredential(result, saveFn(), savePublicFn);
         setNotice(got ? "GitHub connected." : "Signed in with GitHub, but repo access wasn't granted — try again and allow it.");
       } else {
         setNotice(`${entry.label} connected.`);
       }
+      await savePublicIdentity(user.uid, auth.currentUser, savePublicFn);
     } catch (err) {
       const msg = describeAuthError(err, refresh ? `Refreshing ${entry.label}` : `Connecting ${entry.label}`);
       if (msg) setError(msg);
@@ -150,6 +176,99 @@ export default function AccountSettingsPage() {
     }
   }
 
+  function resetMfaFlow() {
+    setMfaMode(null);
+    setMfaStep("start");
+    setPhoneNumber("");
+    setMfaCode("");
+    setMfaVerificationId("");
+    setTotpSecret(null);
+    setTotpQrUri("");
+    setMfaErrorMsg("");
+  }
+
+  function mfaFriendlyError(err) {
+    if (err.code === "auth/requires-recent-login") {
+      return "This needs a fresh sign-in first — reconnect one of your accounts above (Connected accounts), then try again.";
+    }
+    return err.message || "Something went wrong — try again.";
+  }
+
+  async function handleSendPhoneCode(e) {
+    e.preventDefault();
+    if (!phoneNumber.trim()) return;
+    setMfaBusy(true);
+    setMfaErrorMsg("");
+    try {
+      const id = await startPhoneEnrollment(user, phoneNumber.trim(), "phone-mfa-recaptcha");
+      setMfaVerificationId(id);
+      setMfaStep("code");
+    } catch (err) {
+      setMfaErrorMsg(mfaFriendlyError(err));
+    } finally {
+      setMfaBusy(false);
+    }
+  }
+
+  async function handleConfirmPhoneCode(e) {
+    e.preventDefault();
+    setMfaBusy(true);
+    setMfaErrorMsg("");
+    try {
+      await confirmPhoneEnrollment(user, mfaVerificationId, mfaCode.trim(), phoneNumber.trim());
+      setMfaFactors(enrolledFactors(user));
+      setNotice("Phone number added for two-factor sign-in.");
+      resetMfaFlow();
+    } catch (err) {
+      setMfaErrorMsg(mfaFriendlyError(err));
+    } finally {
+      setMfaBusy(false);
+    }
+  }
+
+  async function handleStartTotp() {
+    setMfaBusy(true);
+    setMfaErrorMsg("");
+    try {
+      const { secret, otpauthUri } = await startTotpEnrollment(user, user.email || user.displayName || "account");
+      setTotpSecret(secret);
+      setTotpQrUri(otpauthUri);
+      setMfaStep("code");
+    } catch (err) {
+      setMfaErrorMsg(mfaFriendlyError(err));
+    } finally {
+      setMfaBusy(false);
+    }
+  }
+
+  async function handleConfirmTotp(e) {
+    e.preventDefault();
+    setMfaBusy(true);
+    setMfaErrorMsg("");
+    try {
+      await confirmTotpEnrollment(user, totpSecret, mfaCode.trim(), "Authenticator app");
+      setMfaFactors(enrolledFactors(user));
+      setNotice("Authenticator app added for two-factor sign-in.");
+      resetMfaFlow();
+    } catch (err) {
+      setMfaErrorMsg(mfaFriendlyError(err));
+    } finally {
+      setMfaBusy(false);
+    }
+  }
+
+  async function handleRemoveFactor(factor) {
+    setError("");
+    setNotice("");
+    try {
+      await unenrollFactor(user, factor.uid);
+      setMfaFactors(enrolledFactors(user));
+      setNotice(`${factor.displayName || "That factor"} removed.`);
+    } catch (err) {
+      setError(mfaFriendlyError(err));
+    }
+  }
+
   async function saveDisplayName() {
     if (!user || !displayName.trim() || displayName.trim() === user.displayName) return;
     setSavingName(true);
@@ -163,18 +282,13 @@ export default function AccountSettingsPage() {
     }
   }
 
+  if (!user) return <div className="shell" />;
+
   return (
     <div className="shell">
-      <div className="shell-topbar">
-        <Link href="/profile" className="shell-topbar-right">
-          <span className="shell-pname">← Profile</span>
-        </Link>
-      </div>
+      <TopNav user={user} />
 
       <div className="shell-view" style={{ maxWidth: 560, margin: "0 auto", width: "100%" }}>
-        {user === undefined && <p style={{ color: "var(--s-text-3)", fontSize: 13 }}>Loading…</p>}
-        {user === null && <p style={{ color: "var(--s-text-3)", fontSize: 13 }}>Sign in to view account settings.</p>}
-
         {user && (
           <>
             <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 24, marginBottom: 24 }}>
@@ -275,6 +389,119 @@ export default function AccountSettingsPage() {
               Drive folders / GitHub repos and chat attachments — no separate setup. Drive access is
               only good for about an hour at a time; if it lapses, use "Refresh Drive access" above.
             </div>
+
+            <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+              Two-factor authentication
+            </p>
+
+            {mfaFactors.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+                {mfaFactors.map((f) => (
+                  <div key={f.uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10 }}>
+                    <span style={{ flex: 1, fontSize: 13 }}>
+                      {f.factorId === PhoneMultiFactorGenerator.FACTOR_ID ? "📱" : "🔐"} {f.displayName || (f.factorId === PhoneMultiFactorGenerator.FACTOR_ID ? f.phoneNumber : "Authenticator app")}
+                    </span>
+                    <button onClick={() => handleRemoveFactor(f)} style={{ padding: "6px 12px", background: "transparent", border: "1px solid var(--s-border)", color: "var(--s-text-2)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, cursor: "pointer" }}>
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {mfaFactors.length === 0 && (
+              <p style={{ fontSize: 12, color: "var(--s-text-3)", marginBottom: 14 }}>Not turned on yet — every future sign-in will ask for a second factor once you add one.</p>
+            )}
+
+            {!mfaMode && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 30 }}>
+                <button onClick={() => setMfaMode("phone")} style={{ padding: "8px 14px", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", color: "var(--s-text)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, cursor: "pointer" }}>
+                  Add phone number
+                </button>
+                <button onClick={() => { setMfaMode("totp"); handleStartTotp(); }} style={{ padding: "8px 14px", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", color: "var(--s-text)", borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, cursor: "pointer" }}>
+                  Add authenticator app
+                </button>
+              </div>
+            )}
+
+            {mfaMode === "phone" && mfaStep === "start" && (
+              <form onSubmit={handleSendPhoneCode} className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
+                <p style={{ fontSize: 13, marginBottom: 12 }}>Enter your phone number (with country code, e.g. +1 555 555 0100).</p>
+                <input
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  placeholder="+1 555 555 0100"
+                  className="shell-input"
+                  style={{ width: "100%", marginBottom: 12 }}
+                />
+                {mfaError && <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 12 }}>{mfaError}</p>}
+                <div id="phone-mfa-recaptcha" />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="submit" disabled={mfaBusy} className="shell-task-add-btn" style={{ padding: "8px 16px" }}>
+                    {mfaBusy ? "Sending…" : "Send code"}
+                  </button>
+                  <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
+                </div>
+              </form>
+            )}
+
+            {mfaMode === "phone" && mfaStep === "code" && (
+              <form onSubmit={handleConfirmPhoneCode} className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
+                <p style={{ fontSize: 13, marginBottom: 12 }}>Enter the code we texted to {phoneNumber}.</p>
+                <input
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  placeholder="123456"
+                  autoFocus
+                  className="shell-input"
+                  style={{ width: "100%", marginBottom: 12, textAlign: "center", letterSpacing: "0.2em" }}
+                />
+                {mfaError && <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 12 }}>{mfaError}</p>}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="submit" disabled={mfaBusy || mfaCode.length < 6} className="shell-task-add-btn" style={{ padding: "8px 16px" }}>
+                    {mfaBusy ? "Verifying…" : "Verify & enable"}
+                  </button>
+                  <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
+                </div>
+              </form>
+            )}
+
+            {mfaMode === "totp" && mfaStep === "start" && (
+              <div className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
+                {mfaBusy && <p style={{ fontSize: 13 }}>Generating secret…</p>}
+                {mfaError && <p style={{ fontSize: 12, color: "#e5534b" }}>{mfaError}</p>}
+                {mfaError && (
+                  <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
+                )}
+              </div>
+            )}
+
+            {mfaMode === "totp" && mfaStep === "code" && totpSecret && (
+              <form onSubmit={handleConfirmTotp} className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
+                <p style={{ fontSize: 13, marginBottom: 12 }}>Scan this with your authenticator app (Google Authenticator, Authy, 1Password, etc.), or enter the key manually.</p>
+                {totpQrUri && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={qrCodeUrl(totpQrUri, 180)} alt="TOTP QR code" style={{ display: "block", marginBottom: 12, borderRadius: 8, background: "#fff", padding: 8 }} />
+                )}
+                <p style={{ fontSize: 11, color: "var(--s-text-3)", marginBottom: 12, wordBreak: "break-all" }}>
+                  Manual key: {totpSecret.secretKey}
+                </p>
+                <input
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  placeholder="123456"
+                  autoFocus
+                  className="shell-input"
+                  style={{ width: "100%", marginBottom: 12, textAlign: "center", letterSpacing: "0.2em" }}
+                />
+                {mfaError && <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 12 }}>{mfaError}</p>}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="submit" disabled={mfaBusy || mfaCode.length < 6} className="shell-task-add-btn" style={{ padding: "8px 16px" }}>
+                    {mfaBusy ? "Verifying…" : "Verify & enable"}
+                  </button>
+                  <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
+                </div>
+              </form>
+            )}
 
             <button onClick={() => signOut(auth)} className="shell-auth-btn" style={{ maxWidth: 200 }}>
               Sign out

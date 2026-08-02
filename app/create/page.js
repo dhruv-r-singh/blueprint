@@ -15,6 +15,8 @@ import {
   slugifyRepoName,
 } from "../../lib/integrations";
 import Toggle from "../components/Toggle";
+import TopNav from "../components/TopNav";
+import { useAuthGate } from "../../lib/useAuthGate";
 
 export default function CreateProjectPage() {
   const router = useRouter();
@@ -32,6 +34,8 @@ export default function CreateProjectPage() {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
     return () => unsub();
   }, []);
+
+  useAuthGate(user);
 
   useEffect(() => {
     if (!user) return;
@@ -125,8 +129,11 @@ export default function CreateProjectPage() {
     router.push(`/project/${ref.id}`);
   }
 
+  if (!user) return <div className="shell" />;
+
   return (
     <div className="shell">
+      <TopNav user={user} />
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <form onSubmit={handleCreate} className="shell-card" style={{ width: "100%", maxWidth: 440 }}>
           <div style={{ fontWeight: 700, fontSize: 24, marginBottom: 6 }}>New project</div>

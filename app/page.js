@@ -6,13 +6,16 @@ import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { collection, query, where, getDocs, doc, setDoc } from "firebase/firestore";
 import { auth, db, googleProvider, githubProvider, linkedinProvider, firebaseConfigured } from "../lib/firebase";
 import { describeAuthError } from "../lib/authErrors";
-import { integrationsDocPath, saveGoogleCredential, saveGithubCredential } from "../lib/integrations";
+import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePublicIdentity } from "../lib/integrations";
+import MfaChallenge from "./components/MfaChallenge";
 
 export default function Page() {
   const router = useRouter();
   const [pending, setPending] = useState(null);
   const [error, setError] = useState("");
   const [user, setUser] = useState(undefined);
+  const [mfaError, setMfaError] = useState(null);
+  const [lastKind, setLastKind] = useState(null);
 
   useEffect(() => {
     if (!firebaseConfigured) {
@@ -53,6 +56,21 @@ export default function Page() {
     })();
   }, [user, router]);
 
+  // Shared between a normal sign-in and one that just cleared a 2FA
+  // challenge (MfaChallenge) — either way, once we have a UserCredential,
+  // piggyback the Drive/GitHub token capture and public-profile sync.
+  async function handleSignedInResult(result, kind) {
+    try {
+      const saveFn = (patch) => setDoc(doc(db, ...integrationsDocPath(result.user.uid)), patch, { merge: true });
+      const savePublicFn = (patch) => setDoc(doc(db, "profiles", result.user.uid), patch, { merge: true });
+      if (kind === "google") await saveGoogleCredential(result, saveFn);
+      else if (kind === "github") await saveGithubCredential(result, saveFn, savePublicFn);
+      await savePublicIdentity(result.user.uid, result.user, savePublicFn);
+    } catch (err) {
+      console.error("Couldn't save Drive/GitHub credential:", err);
+    }
+  }
+
   async function handleSignIn(kind) {
     if (!firebaseConfigured) return;
     setError("");
@@ -61,23 +79,23 @@ export default function Page() {
       const provider =
         kind === "google" ? googleProvider : kind === "github" ? githubProvider : linkedinProvider;
       const result = await signInWithPopup(auth, provider);
-
-      // Piggyback the Drive/GitHub access token off this same sign-in —
-      // see lib/integrations.js. Non-fatal if it fails; sign-in itself
-      // already succeeded.
-      try {
-        const saveFn = (patch) => setDoc(doc(db, ...integrationsDocPath(result.user.uid)), patch, { merge: true });
-        if (kind === "google") await saveGoogleCredential(result, saveFn);
-        else if (kind === "github") await saveGithubCredential(result, saveFn);
-      } catch (err) {
-        console.error("Couldn't save Drive/GitHub credential:", err);
-      }
+      await handleSignedInResult(result, kind);
     } catch (err) {
+      if (err.code === "auth/multi-factor-auth-required") {
+        setLastKind(kind);
+        setMfaError(err);
+        return;
+      }
       const msg = describeAuthError(err);
       if (msg) setError(msg);
     } finally {
       setPending(null);
     }
+  }
+
+  async function handleMfaResolved(result) {
+    setMfaError(null);
+    await handleSignedInResult(result, lastKind);
   }
 
   async function handleSignOut() {
@@ -87,6 +105,16 @@ export default function Page() {
     } catch (err) {
       setError("Sign-out failed — " + (err.code || "try again"));
     }
+  }
+
+  if (mfaError) {
+    return (
+      <div className="shell">
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <MfaChallenge error={mfaError} onResolved={handleMfaResolved} onCancel={() => setMfaError(null)} />
+        </div>
+      </div>
+    );
   }
 
   return (
