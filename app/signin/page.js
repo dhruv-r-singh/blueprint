@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signInWithPopup, signInWithCustomToken, signOut } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import { auth, db, googleProvider, githubProvider, firebaseConfigured } from "../../lib/firebase";
@@ -58,8 +58,7 @@ export default function SignInPage() {
     setError("");
     setPending(kind);
     try {
-      const provider =
-        kind === "google" ? googleProvider : kind === "github" ? githubProvider : linkedinProvider;
+      const provider = kind === "google" ? googleProvider : githubProvider;
       const result = await signInWithPopup(auth, provider);
       await handleSignedInResult(result, kind);
     } catch (err) {
@@ -74,6 +73,41 @@ export default function SignInPage() {
       setPending(null);
     }
   }
+
+  // LinkedIn doesn't go through Firebase's built-in OIDC provider (see
+  // app/api/auth/linkedin/start/route.js for why) — instead it's a full
+  // page redirect out to our own API route and back, landing here with
+  // either a `linkedinToken` (a Firebase custom token to sign in with) or
+  // a `linkedinError` in the URL.
+  function handleLinkedInClick() {
+    if (!firebaseConfigured) return;
+    setPending("linkedin");
+    window.location.href = "/api/auth/linkedin/start?return=/signin";
+  }
+
+  useEffect(() => {
+    if (!firebaseConfigured) return;
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("linkedinToken");
+    const linkedinError = params.get("linkedinError");
+    if (!token && !linkedinError) return;
+
+    window.history.replaceState(null, "", window.location.pathname);
+
+    if (linkedinError) {
+      setError(linkedinError);
+      return;
+    }
+    setPending("linkedin");
+    signInWithCustomToken(auth, token)
+      .then((result) => handleSignedInResult(result, "linkedin"))
+      .catch((err) => {
+        const msg = describeAuthError(err);
+        setError(msg || "LinkedIn sign-in failed.");
+      })
+      .finally(() => setPending(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseConfigured]);
 
   async function handleMfaResolved(result) {
     setMfaError(null);
@@ -142,7 +176,7 @@ export default function SignInPage() {
 
           <button
             className="shell-auth-btn"
-            onClick={() => handleSignIn("linkedin")}
+            onClick={handleLinkedInClick}
             disabled={!firebaseConfigured || pending !== null}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="#0A66C2">

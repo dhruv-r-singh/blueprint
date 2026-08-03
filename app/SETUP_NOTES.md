@@ -35,35 +35,65 @@ isolation between projects.
 
 ## LinkedIn sign-in
 
-LinkedIn sign-in is not a built-in Firebase provider — it's a **custom OIDC
-provider** you wire up by hand. This is almost always why it's failing.
+**LinkedIn sign-in does NOT use Firebase's built-in "OpenID Connect" sign-in
+provider.** It used to try to, but that path is fundamentally broken:
+Firebase's generic OIDC connector authenticates its token-exchange call to
+the provider with an HTTP Basic Auth header, while LinkedIn's token
+endpoint only accepts the client secret as a POST body parameter. Every
+attempt fails with `INVALID_IDP_RESPONSE: ... "A required parameter
+'client_secret' is missing"`, no matter how correctly the provider is
+configured in the Firebase console. This is a real, documented
+incompatibility between Firebase Auth and LinkedIn — not a setup mistake,
+and there's no config value that fixes it.
+
+Instead, LinkedIn sign-in is a **hand-rolled OAuth flow** — the same
+approach used in Firebase's own official `linkedin-auth` Cloud Functions
+sample — implemented as two API routes:
+
+- `app/api/auth/linkedin/start/route.js` — redirects the browser to
+  LinkedIn's authorization screen.
+- `app/api/auth/linkedin/callback/route.js` — LinkedIn redirects back here
+  with a `code`; this route exchanges it for an access token (client
+  secret correctly sent in the POST body this time), fetches the user's
+  profile from LinkedIn, creates/updates a Firebase user for them via the
+  Admin SDK (uid `linkedin:<linkedin sub>`), and mints a Firebase **custom
+  token**. It redirects back to whichever page started the flow
+  (`/signin` or `/join/[code]`) with that token in the URL, which then
+  calls `signInWithCustomToken`.
+
+To set this up:
 
 1. In the [LinkedIn Developer Portal](https://www.linkedin.com/developers/apps),
-   open your app, go to **Products**, and add **"Sign In with LinkedIn using
-   OpenID Connect."**
-2. Under **Auth**, add this exact redirect URL:
-   `https://blueprint-drs.firebaseapp.com/__/auth/handler`
-   (Firebase handles the callback itself — this is the only redirect URI
-   LinkedIn needs, whether sign-in happens via popup or redirect.)
-3. Copy the **Client ID** and **Client Secret** LinkedIn gives you.
-4. In Firebase console → **Authentication → Sign-in method → Add new
-   provider → OpenID Connect**, create a provider with:
-   - Provider ID: `oidc.linkedin` (must match exactly — this is what
-     `lib/firebase.js` references)
-   - Client ID / Client secret: from step 3
-   - Issuer URL: `https://www.linkedin.com/oauth`
-5. Save, then try signing in again.
+   open your app → **Products** → confirm **"Sign In with LinkedIn using
+   OpenID Connect"** is already added (it should be — this hasn't changed).
+2. Under **Auth → Authorized redirect URLs**, **add** (don't remove the
+   existing Firebase one, it doesn't hurt anything left in place):
+   `https://<your-domain>/api/auth/linkedin/callback`
+   — e.g. `https://blueprint.dhruvrsingh.com/api/auth/linkedin/callback`.
+   If you also test from a different domain (a Vercel preview URL, etc.),
+   add that one too — LinkedIn allows multiple.
+3. Copy the **Client ID** and **Primary Client Secret** from the Auth tab
+   (same values already sitting in Firebase's OIDC provider config — you
+   can copy them from there instead if that's easier).
+4. In **Vercel → your project → Settings → Environment Variables**, add:
+   - `LINKEDIN_CLIENT_ID`
+   - `LINKEDIN_CLIENT_SECRET`
+   Redeploy after adding these (env var changes need a new deployment to
+   take effect).
+5. This also needs `FIREBASE_SERVICE_ACCOUNT_KEY` set (see the Google
+   Drive/GitHub section below) — you already have this configured since
+   Drive access uses it too.
 
-If it still fails, the error banner on the sign-in page (and on
-`/account`) now shows a specific reason instead of a raw error code:
+Once those env vars are set and the app's redeployed, "Continue with
+LinkedIn" on `/signin` and `/join/[code]` will work as a normal full-page
+redirect (no popup, so this also works inside the Electron shell, which
+popup-based sign-in never reliably did).
 
-- **"this sign-in method isn't turned on yet"** → you skipped/missed step 4
-- **"this domain isn't in Firebase's authorized domains list"** → add your
-  `*.vercel.app` URL (or custom domain) under Authentication → Settings →
-  Authorized domains
-- **"the identity provider rejected the request"** → double check the
-  client ID/secret and issuer URL in step 4 for typos
-- **"the browser blocked the sign-in popup"** → allow popups for the site
+**Known limitation:** the "Connect LinkedIn" button in Preferences
+(`/account`, for *linking* LinkedIn to an already-signed-in account so its
+profile URL shows up on your profile page) still goes through the old,
+broken Firebase OIDC connector and will hit the same error — that's a
+separate code path from primary sign-in and hasn't been migrated yet.
 
 ## Firestore rules — invite links now need one more rule
 

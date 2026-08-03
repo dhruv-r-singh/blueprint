@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { onAuthStateChanged, signInWithPopup } from "firebase/auth";
+import { onAuthStateChanged, signInWithPopup, signInWithCustomToken } from "firebase/auth";
 import { collection, query, where, getDocs, doc, updateDoc, setDoc, arrayUnion } from "firebase/firestore";
-import { auth, db, googleProvider, githubProvider, linkedinProvider } from "../../../lib/firebase";
+import { auth, db, googleProvider, githubProvider } from "../../../lib/firebase";
 import { describeAuthError } from "../../../lib/authErrors";
 import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePublicIdentity } from "../../../lib/integrations";
 import MfaChallenge from "../../components/MfaChallenge";
@@ -70,7 +70,7 @@ export default function JoinPage() {
     setError("");
     setPending(kind);
     try {
-      const provider = kind === "google" ? googleProvider : kind === "github" ? githubProvider : linkedinProvider;
+      const provider = kind === "google" ? googleProvider : githubProvider;
       const result = await signInWithPopup(auth, provider);
       await handleSignedInResult(result, kind);
     } catch (err) {
@@ -85,6 +85,39 @@ export default function JoinPage() {
       setPending(null);
     }
   }
+
+  // LinkedIn doesn't go through Firebase's built-in OIDC provider — see
+  // app/api/auth/linkedin/start/route.js for why — it's a full page
+  // redirect out and back instead, landing here with either a
+  // `linkedinToken` or a `linkedinError` in the URL.
+  function handleLinkedInClick() {
+    setPending("linkedin");
+    window.location.href = `/api/auth/linkedin/start?return=${encodeURIComponent(`/join/${code}`)}`;
+  }
+
+  useEffect(() => {
+    if (!code) return;
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("linkedinToken");
+    const linkedinError = params.get("linkedinError");
+    if (!token && !linkedinError) return;
+
+    window.history.replaceState(null, "", window.location.pathname);
+
+    if (linkedinError) {
+      setError(linkedinError);
+      return;
+    }
+    setPending("linkedin");
+    signInWithCustomToken(auth, token)
+      .then((result) => handleSignedInResult(result, "linkedin"))
+      .catch((err) => {
+        const msg = describeAuthError(err);
+        setError(msg || "LinkedIn sign-in failed.");
+      })
+      .finally(() => setPending(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code]);
 
   async function handleMfaResolved(result) {
     setMfaError(null);
@@ -123,7 +156,7 @@ export default function JoinPage() {
               <button className="shell-auth-btn" onClick={() => handleSignIn("github")} disabled={pending !== null}>
                 {pending === "github" ? "Signing in…" : "Continue with GitHub"}
               </button>
-              <button className="shell-auth-btn" onClick={() => handleSignIn("linkedin")} disabled={pending !== null}>
+              <button className="shell-auth-btn" onClick={handleLinkedInClick} disabled={pending !== null}>
                 {pending === "linkedin" ? "Signing in…" : "Continue with LinkedIn"}
               </button>
             </>
