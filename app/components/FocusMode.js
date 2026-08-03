@@ -42,12 +42,21 @@ export default function FocusMode({ user, open: openProp, onOpenChange }) {
   }, [user?.uid]);
 
   useEffect(() => {
+    // Only listen while THIS dropdown is actually open. Without this
+    // guard, the listener was always active — so any mousedown anywhere
+    // else on the page (including on the hamburger nav menu's own
+    // buttons, which share the same "which menu is open" state via
+    // onOpenChange) got treated as "click outside FocusMode" and closed
+    // whichever menu was open, wiping it out between mousedown and
+    // mouseup/click and silently swallowing the click before it could
+    // ever reach the button being clicked.
+    if (!open) return;
     function onClickOutside(e) {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
     }
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
-  }, []);
+  }, [open]);
 
   function pick(key) {
     setOpen(false);
