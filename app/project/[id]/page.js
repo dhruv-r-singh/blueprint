@@ -35,7 +35,7 @@ import {
   listCalendarEvents,
   uploadFileToDrive,
 } from "../../../lib/integrations";
-import { uploadFile, safeFileName, compressImage } from "../../../lib/storage";
+import { uploadFile, deleteFile, safeFileName, compressImage } from "../../../lib/storage";
 import { aiComplete, aiCompleteJSON } from "../../../lib/ai";
 import Autocomplete from "../../components/Autocomplete";
 import TopNav from "../../components/TopNav";
@@ -211,6 +211,8 @@ export default function ProjectPage() {
   const [deletingProject, setDeletingProject] = useState(false);
   const [imageUploadPct, setImageUploadPct] = useState(null);
   const [imageError, setImageError] = useState("");
+  const [bannerUploadPct, setBannerUploadPct] = useState(null);
+  const [bannerError, setBannerError] = useState("");
   const [chatFilePct, setChatFilePct] = useState(null);
   const [chatFileError, setChatFileError] = useState("");
   const [alsoAddToDrive, setAlsoAddToDrive] = useState(false);
@@ -262,6 +264,12 @@ export default function ProjectPage() {
   const [presenceTick, setPresenceTick] = useState(0); // bumps periodically so online/offline labels stay fresh
   const [replyingTo, setReplyingTo] = useState(null); // { id, senderName, text } | null
   const [chatSearch, setChatSearch] = useState("");
+  // "Jump to chat" from the Files tab (see the files tab below) sets this,
+  // then the effect right after the messages-scroll effect finds that
+  // message's DOM node once Chat is showing, scrolls to it, and briefly
+  // flashes it — instead of just switching tabs and leaving you to hunt for
+  // it in a long history.
+  const [jumpToMessageId, setJumpToMessageId] = useState(null);
   const [messageTarget, setMessageTarget] = useState(null); // { toUid, toLabel } | null — toUid is null for a seed candidate
   const [stagedAttachment, setStagedAttachment] = useState(null); // attachment fields waiting for Send, not yet posted
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
@@ -425,6 +433,21 @@ export default function ProjectPage() {
     if (tab !== "chat") return;
     msgsEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages, tab]);
+
+  // "Jump to chat" from the Files tab — runs after the scroll-to-bottom
+  // effect above, so a pending jump target wins over the default "scroll to
+  // newest" behavior. Clears any active chat search first (in an onClick
+  // below) so the target message can't be hidden by a stale filter.
+  useEffect(() => {
+    if (!jumpToMessageId || tab !== "chat") return;
+    const el = document.getElementById("msg-" + jumpToMessageId);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("shell-msg-flash");
+      setTimeout(() => el.classList.remove("shell-msg-flash"), 2000);
+    }
+    setJumpToMessageId(null);
+  }, [jumpToMessageId, tab, messages]);
 
   // "Sound on new message" / "Only for @mentions" preferences (Preferences
   // → Notifications). Plays a short two-tone chime via the Web Audio API
@@ -849,6 +872,15 @@ export default function ProjectPage() {
     } catch {
       return code;
     }
+  }
+
+  /** Small badge content for an attachment/message provider — Drive and GitHub show their real mark, not just a flat colored box with text. */
+  function attachmentBadgeLabel(provider, voice) {
+    if (voice) return "Voice";
+    if (provider === "drive") return (<><IconDriveMark size={11} /> Drive</>);
+    if (provider === "github") return (<><IconGithubMark size={11} /> GitHub</>);
+    if (provider === "upload") return "File";
+    return "Link";
   }
 
   /** Formats a message's Firestore Timestamp per the "24-hour clock" preference (Preferences → Appearance → Chat display). */
@@ -1404,6 +1436,51 @@ export default function ProjectPage() {
     }
   }
 
+  async function removeImage() {
+    if (!project) return;
+    if (project.imagePath) deleteFile(project.imagePath);
+    try {
+      await updateDoc(doc(db, "projects", id), { imageUrl: null, imagePath: null });
+    } catch (err) {
+      console.error("Couldn't remove image:", err);
+    }
+  }
+
+  // A separate "banner" (Overview's wide hero image) from the small square
+  // "Image" above (used as the project's icon in the sidebar switcher/cards).
+  // Reusing one square-cropped field for both stretched it into an odd,
+  // ugly-looking banner — this gives each its own upload and its own crop.
+  async function handleBannerUpload(file) {
+    if (!file || !user) return;
+    if (!file.type.startsWith("image/")) {
+      setBannerError("Pick an image file.");
+      return;
+    }
+    setBannerError("");
+    setBannerUploadPct(0);
+    try {
+      const compressed = await compressImage(file, { maxDimension: 1800 });
+      const path = `projects/${id}/banner-${Date.now()}-${safeFileName(compressed.name || file.name)}`;
+      const url = await uploadFile(path, compressed, setBannerUploadPct);
+      await updateDoc(doc(db, "projects", id), { bannerUrl: url, bannerPath: path });
+    } catch (err) {
+      console.error("Banner upload failed:", err);
+      setBannerError(err.message || "Couldn't upload that banner.");
+    } finally {
+      setBannerUploadPct(null);
+    }
+  }
+
+  async function removeBanner() {
+    if (!project) return;
+    if (project.bannerPath) deleteFile(project.bannerPath);
+    try {
+      await updateDoc(doc(db, "projects", id), { bannerUrl: null, bannerPath: null });
+    } catch (err) {
+      console.error("Couldn't remove banner:", err);
+    }
+  }
+
   async function createEvent(e) {
     e.preventDefault();
     if (!user || !project) return;
@@ -1696,10 +1773,10 @@ export default function ProjectPage() {
             <div className="shell-view">
               <div className="shell-overview-grid">
                 <div style={{ minWidth: 0 }}>
-                  {project.imageUrl && (
+                  {project.bannerUrl && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={project.imageUrl}
+                      src={project.bannerUrl}
                       alt=""
                       style={{ width: "100%", maxHeight: 220, objectFit: "cover", borderRadius: 14, border: "1px solid var(--s-border)", marginBottom: 22 }}
                     />
@@ -1745,13 +1822,13 @@ export default function ProjectPage() {
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         {project.driveFolderUrl && (
                           <a href={project.driveFolderUrl} target="_blank" rel="noopener noreferrer" className="shell-attachment-card">
-                            <span className="shell-attachment-badge drive">Drive</span>
+                            <span className="shell-attachment-badge drive">{attachmentBadgeLabel("drive")}</span>
                             <span className="shell-attachment-title">Project folder</span>
                           </a>
                         )}
                         {project.githubRepoUrl && (
                           <a href={project.githubRepoUrl} target="_blank" rel="noopener noreferrer" className="shell-attachment-card">
-                            <span className="shell-attachment-badge github">GitHub</span>
+                            <span className="shell-attachment-badge github">{attachmentBadgeLabel("github")}</span>
                             <span className="shell-attachment-title">{project.githubRepoFullName || "Repository"}</span>
                           </a>
                         )}
@@ -1885,6 +1962,7 @@ export default function ProjectPage() {
                         const profile = memberProfiles[uid] || {};
                         const online = isOnline(profile.lastActiveAt);
                         const name = profile.name || (uid === user?.uid ? user?.displayName || user?.email : profile.email) || "Member";
+                        const fm = focusModeInfo(profile.focusMode, profile.activeFocusLabel, profile.activeFocusColor);
                         return (
                           <div
                             key={uid}
@@ -1896,29 +1974,21 @@ export default function ProjectPage() {
                                 <img
                                   src={profile.avatarUrl}
                                   alt=""
-                                  style={{
-                                    width: 26,
-                                    height: 26,
-                                    borderRadius: "50%",
-                                    objectFit: "cover",
-                                    ...(focusModeInfo(profile.focusMode) ? { boxShadow: `0 0 0 2px ${focusModeInfo(profile.focusMode).color}` } : {}),
-                                  }}
+                                  style={{ width: 26, height: 26, borderRadius: "50%", objectFit: "cover" }}
                                 />
                               ) : (
-                                <span
-                                  className="shell-avatar"
-                                  style={focusModeInfo(profile.focusMode) ? { boxShadow: `0 0 0 2px ${focusModeInfo(profile.focusMode).color}` } : undefined}
-                                >
-                                  {(name || "?")[0]?.toUpperCase()}
-                                </span>
+                                <span className="shell-avatar">{(name || "?")[0]?.toUpperCase()}</span>
                               )}
-                              <span className={"shell-presence-dot" + (online ? " online" : "")} title={online ? "Online" : lastSeenLabel(profile.lastActiveAt)} />
+                              <span
+                                className={"shell-presence-dot" + (online ? " online" : "")}
+                                style={online && fm ? { background: fm.color } : undefined}
+                                title={online ? (fm?.label || "Available") : lastSeenLabel(profile.lastActiveAt)}
+                              />
                             </span>
                             <span style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                               {name}
                               {uid === project.ownerId && <span style={{ color: "var(--s-text-3)" }}> · Owner</span>}
                               {(() => {
-                                const fm = focusModeInfo(profile.focusMode);
                                 return fm ? (
                                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--s-text-3)" }} title={fm.label}>
                                     <span style={{ width: 6, height: 6, borderRadius: "50%", background: fm.color }} />
@@ -2502,10 +2572,13 @@ export default function ProjectPage() {
                     const grouped = Boolean(
                       prevM && prevM.senderId === m.senderId && !m.replyTo && withinGroupWindow(prevM.createdAt, m.createdAt)
                     );
-                    const fm = focusModeInfo(memberProfiles[m.senderId]?.focusMode);
-                    const ringStyle = fm ? { boxShadow: `0 0 0 2px ${fm.color}` } : undefined;
+                    const fm = focusModeInfo(
+                      memberProfiles[m.senderId]?.focusMode,
+                      memberProfiles[m.senderId]?.activeFocusLabel,
+                      memberProfiles[m.senderId]?.activeFocusColor
+                    );
                     return (
-                    <div key={m.id} className={"shell-msg" + (m.mentions?.includes(user?.uid) ? " mentioned" : "") + (grouped ? " grouped" : "")}>
+                    <div id={"msg-" + m.id} key={m.id} className={"shell-msg" + (m.mentions?.includes(user?.uid) ? " mentioned" : "") + (grouped ? " grouped" : "")}>
                       <div className="shell-msg-actions">
                         <button type="button" className="shell-msg-action-btn" title="Reply" onClick={() => startReply(m)}>
                           <IconReply size={13} />
@@ -2573,14 +2646,20 @@ export default function ProjectPage() {
                       <span className="shell-presence-wrap" style={{ marginTop: 2, visibility: grouped ? "hidden" : "visible" }}>
                         {memberProfiles[m.senderId]?.avatarUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={memberProfiles[m.senderId].avatarUrl} alt="" className="shell-avatar" style={ringStyle} />
+                          <img src={memberProfiles[m.senderId].avatarUrl} alt="" className="shell-avatar" />
                         ) : (
-                          <span className="shell-avatar" style={ringStyle}>{m.senderName?.[0]?.toUpperCase()}</span>
+                          <span className="shell-avatar">{m.senderName?.[0]?.toUpperCase()}</span>
                         )}
                         {(() => {
                           void presenceTick;
                           const online = isOnline(memberProfiles[m.senderId]?.lastActiveAt);
-                          return <span className={"shell-presence-dot" + (online ? " online" : "")} />;
+                          return (
+                            <span
+                              className={"shell-presence-dot" + (online ? " online" : "")}
+                              style={online && fm ? { background: fm.color } : undefined}
+                              title={online ? (fm?.label || "Available") : "Offline"}
+                            />
+                          );
                         })()}
                       </span>
                       <div className="shell-msg-body" style={{ flex: 1 }}>
@@ -2659,7 +2738,7 @@ export default function ProjectPage() {
                                 className="shell-attachment-card"
                               >
                                 <span className={"shell-attachment-badge " + m.provider}>
-                                  {m.provider === "drive" ? "Drive" : m.provider === "github" ? "GitHub" : m.provider === "upload" ? "File" : "Link"}
+                                  {attachmentBadgeLabel(m.provider)}
                                 </span>
                                 <span className="shell-attachment-title">{m.title}</span>
                                 {m.provider === "upload" && m.fileSize ? (
@@ -2668,7 +2747,7 @@ export default function ProjectPage() {
                               </a>
                               {m.driveUrl && (
                                 <a href={m.driveUrl} target="_blank" rel="noopener noreferrer" className="shell-attachment-card">
-                                  <span className="shell-attachment-badge drive">Drive</span>
+                                  <span className="shell-attachment-badge drive">{attachmentBadgeLabel("drive")}</span>
                                   <span className="shell-attachment-title">Also on Drive</span>
                                 </a>
                               )}
@@ -2925,7 +3004,7 @@ export default function ProjectPage() {
                 {composerMode === null && !recording && stagedAttachment && (
                   <div className="shell-staged-attachment">
                     <span className={"shell-attachment-badge " + stagedAttachment.provider}>
-                      {stagedAttachment.provider === "drive" ? "Drive" : stagedAttachment.provider === "github" ? "GitHub" : stagedAttachment.provider === "upload" ? "File" : "Link"}
+                      {attachmentBadgeLabel(stagedAttachment.provider)}
                     </span>
                     <span className="shell-attachment-title" style={{ fontSize: 13 }}>{stagedAttachment.title}</span>
                     <button type="button" className="shell-staged-attachment-remove" onClick={() => setStagedAttachment(null)} aria-label="Remove attachment">
@@ -3050,18 +3129,21 @@ export default function ProjectPage() {
                       const profile = memberProfiles[uid] || {};
                       const online = isOnline(profile.lastActiveAt);
                       const name = profile.name || (uid === user?.uid ? user?.displayName || user?.email : "Member");
-                      const fm = focusModeInfo(profile.focusMode);
-                      const ringStyle = fm ? { boxShadow: `0 0 0 2px ${fm.color}` } : undefined;
+                      const fm = focusModeInfo(profile.focusMode, profile.activeFocusLabel, profile.activeFocusColor);
                       return (
                         <div key={uid} style={{ display: "flex", alignItems: "center", gap: 9 }}>
                           <span className="shell-presence-wrap">
                             {profile.avatarUrl ? (
                               // eslint-disable-next-line @next/next/no-img-element
-                              <img src={profile.avatarUrl} alt="" className="shell-avatar" style={{ width: 32, height: 32, ...ringStyle }} />
+                              <img src={profile.avatarUrl} alt="" className="shell-avatar" style={{ width: 32, height: 32 }} />
                             ) : (
-                              <span className="shell-avatar" style={{ width: 32, height: 32, fontSize: 13, ...ringStyle }}>{(name || "?")[0]?.toUpperCase()}</span>
+                              <span className="shell-avatar" style={{ width: 32, height: 32, fontSize: 13 }}>{(name || "?")[0]?.toUpperCase()}</span>
                             )}
-                            <span className={"shell-presence-dot" + (online ? " online" : "")} />
+                            <span
+                              className={"shell-presence-dot" + (online ? " online" : "")}
+                              style={online && fm ? { background: fm.color } : undefined}
+                              title={online ? (fm?.label || "Available") : "Offline"}
+                            />
                           </span>
                           <span style={{ flex: 1, minWidth: 0 }}>
                             <span style={{ fontSize: 13.5, color: online ? "var(--s-text)" : "var(--s-text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
@@ -3119,7 +3201,7 @@ export default function ProjectPage() {
                           <span className="shell-avatar" style={{ width: 26, height: 26, fontSize: 10, flex: "none" }}>{(m.senderName || "?")[0]?.toUpperCase()}</span>
                         )}
                         <span className={"shell-attachment-badge " + (m.provider || "voice")} style={{ flex: "none" }}>
-                          {m.type === "voice" ? "Voice" : m.provider === "drive" ? "Drive" : m.provider === "github" ? "GitHub" : m.provider === "upload" ? "File" : "Link"}
+                          {attachmentBadgeLabel(m.provider, m.type === "voice")}
                         </span>
                         <div style={{ flex: 1, minWidth: 140 }}>
                           <a href={m.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--s-text)", fontSize: 13.5, textDecoration: "none" }}>
@@ -3144,7 +3226,11 @@ export default function ProjectPage() {
                         <button
                           type="button"
                           className="ghost"
-                          onClick={() => setTab("chat")}
+                          onClick={() => {
+                            setChatSearch("");
+                            setJumpToMessageId(m.id);
+                            setTab("chat");
+                          }}
                           style={{ fontSize: 11.5 }}
                         >
                           Jump to chat
@@ -3231,8 +3317,57 @@ export default function ProjectPage() {
                       style={{ display: "none" }}
                     />
                   </label>
+                  {project.imageUrl && imageUploadPct === null && (
+                    <button type="button" onClick={removeImage} className="ghost" style={{ fontSize: 11.5, marginLeft: 8 }}>
+                      Remove
+                    </button>
+                  )}
                   {imageError && <div style={{ fontSize: 11, color: "#e5534b", marginTop: 4 }}>{imageError}</div>}
                 </div>
+              </div>
+
+              <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+                Banner
+              </p>
+              <div style={{ marginBottom: 32 }}>
+                {project.bannerUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={project.bannerUrl} alt="" style={{ width: "100%", maxWidth: 420, height: 100, objectFit: "cover", borderRadius: 10, border: "1px solid var(--s-border)", marginBottom: 10, display: "block" }} />
+                ) : (
+                  <div style={{ width: "100%", maxWidth: 420, height: 100, borderRadius: 10, background: "var(--s-bg-elevated)", border: "1px dashed var(--s-border)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "var(--s-text-3)", marginBottom: 10 }}>
+                    No banner
+                  </div>
+                )}
+                <label
+                  style={{
+                    display: "inline-block",
+                    padding: "9px 16px",
+                    background: "var(--s-bg-elevated)",
+                    border: "1px solid var(--s-border)",
+                    borderRadius: 7,
+                    fontFamily: "'DM Sans', sans-serif",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: bannerUploadPct !== null ? "not-allowed" : "pointer",
+                    color: "var(--s-text-2)",
+                  }}
+                >
+                  {bannerUploadPct !== null ? `Uploading… ${bannerUploadPct}%` : project.bannerUrl ? "Change banner" : "Upload banner"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    disabled={bannerUploadPct !== null}
+                    onChange={(e) => e.target.files[0] && handleBannerUpload(e.target.files[0])}
+                    style={{ display: "none" }}
+                  />
+                </label>
+                {project.bannerUrl && bannerUploadPct === null && (
+                  <button type="button" onClick={removeBanner} className="ghost" style={{ fontSize: 11.5, marginLeft: 8 }}>
+                    Remove
+                  </button>
+                )}
+                {bannerError && <div style={{ fontSize: 11, color: "#e5534b", marginTop: 4 }}>{bannerError}</div>}
+                <div style={{ fontSize: 11, color: "var(--s-text-3)", marginTop: 6 }}>Shows at the top of Overview. Leave unset to skip it entirely.</div>
               </div>
 
               <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>

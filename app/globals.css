@@ -878,7 +878,7 @@ img.shell-avatar {
   padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 9px;
 }
 /* Appearance/Accessibility preferences, applied body-wide by TopNav.js */
 body.reduce-motion,
@@ -890,7 +890,7 @@ body.compact-mode .shell-view {
   padding: 18px;
 }
 body.compact-mode .shell-msgs {
-  gap: 8px;
+  gap: 5px;
 }
 body.compact-mode .shell-task-card {
   padding: 8px 8px 8px 10px;
@@ -915,10 +915,24 @@ body.compact-mode .shell-task-card {
    full 16px gap between every line reads as one message per person instead
    of one continuous exchange. */
 .shell-msg.grouped {
-  margin-top: -10px;
+  margin-top: -5px;
 }
 .shell-msg:hover {
   background: rgba(255, 255, 255, 0.03);
+}
+
+/* "Jump to chat" from the Files tab briefly flashes the actual message
+   instead of just switching tabs and leaving you to hunt for it. */
+@keyframes shell-msg-flash {
+  0%, 100% { background: transparent; }
+  15%, 60% { background: rgba(224, 163, 57, 0.16); }
+}
+.shell-msg-flash {
+  animation: shell-msg-flash 2s ease;
+}
+body.reduce-motion .shell-msg-flash {
+  animation: none;
+  background: rgba(224, 163, 57, 0.16);
 }
 
 /* "Always show timestamps" (Preferences → Appearance → Chat display) — off
@@ -1183,6 +1197,9 @@ button.ghost:hover {
 }
 .shell-attachment-badge {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-family: "DM Sans", sans-serif;
   font-weight: 700;
   font-size: 10px;
@@ -1190,8 +1207,14 @@ button.ghost:hover {
   border-radius: 6px;
   color: #fff;
 }
+/* Drive's real mark is already full-color (see IconDriveMark in icons.js),
+   so it sits on a neutral chip instead of a flat brand-blue box — a solid
+   blue rectangle with plain white "Drive" text next to the actual
+   multi-color logo elsewhere in the app looked like two different brands. */
 .shell-attachment-badge.drive {
-  background: #1a73e8;
+  background: var(--s-bg-elevated);
+  border: 1px solid var(--s-border);
+  color: var(--s-text-2);
 }
 .shell-attachment-badge.github {
   background: #24292e;

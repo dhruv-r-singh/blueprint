@@ -128,7 +128,7 @@ export default function AccountSettingsPage() {
   const [integrations, setIntegrations] = useState(null);
   const [profile, setProfile] = useState(null);
   const [mfaFactors, setMfaFactors] = useState([]);
-  const [mfaMode, setMfaMode] = useState(null); // null | "phone" | "totp"
+  const [mfaMode, setMfaMode] = useState(null); // null | "choose" | "phone" | "totp"
   const [mfaStep, setMfaStep] = useState("start"); // start | code
   const [phoneNumber, setPhoneNumber] = useState("");
   const [mfaCode, setMfaCode] = useState("");
@@ -528,7 +528,7 @@ export default function AccountSettingsPage() {
               </div>
 
               <p style={sectionLabelStyle()}>Connected accounts</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
                 {PROVIDERS.map((entry) => {
                   const connected = entry.id === "oidc.linkedin" ? isLinkedinConnected() : linkedIds.has(entry.id);
                   const integrated = hasIntegration(entry);
@@ -593,12 +593,6 @@ export default function AccountSettingsPage() {
                   );
                 })}
               </div>
-              <div style={{ fontSize: 11, color: "var(--s-text-3)", marginBottom: 30 }}>
-                Connecting Google or GitHub here (or signing in with them) automatically enables project
-                Drive folders / GitHub repos and chat attachments, no separate setup needed. Drive access now
-                renews itself in the background, so you shouldn't need "Refresh Drive access" above. It's
-                there as a manual fallback if it ever does lapse.
-              </div>
 
               <p style={sectionLabelStyle()}>Discoverability</p>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 30 }}>
@@ -630,24 +624,53 @@ export default function AccountSettingsPage() {
                   ))}
                 </div>
               )}
-              {mfaFactors.length === 0 && (
-                <p style={{ fontSize: 12, color: "var(--s-text-3)", marginBottom: 14 }}>Not turned on yet. Every future sign-in will ask for a second factor once you add one.</p>
+              {!mfaMode && (
+                <button onClick={() => setMfaMode("choose")} className="shell-btn-outline" style={{ fontSize: 12, marginBottom: 30 }}>
+                  {mfaFactors.length > 0 ? "Add another method" : "Set up two-factor authentication"}
+                </button>
               )}
 
-              {!mfaMode && (
-                <div style={{ display: "flex", gap: 8, marginBottom: 30 }}>
-                  <button onClick={() => setMfaMode("phone")} className="shell-btn-outline" style={{ fontSize: 12 }}>
-                    Add phone number
-                  </button>
-                  <button onClick={() => { setMfaMode("totp"); handleStartTotp(); }} className="shell-btn-outline" style={{ fontSize: 12 }}>
-                    Add authenticator app
-                  </button>
+              {mfaMode === "choose" && (
+                <div className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
+                  <div style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+                    Step 1 of 2 · Choose a method
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                    <button
+                      type="button"
+                      onClick={() => setMfaMode("phone")}
+                      className="shell-proj-row"
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", border: "1px solid var(--s-border)", borderRadius: 10, textAlign: "left" }}
+                    >
+                      <IconPhone size={15} />
+                      <span>
+                        <div style={{ fontWeight: 600, fontSize: 13.5 }}>Text message</div>
+                        <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>We send a code to your phone at sign-in.</div>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setMfaMode("totp"); handleStartTotp(); }}
+                      className="shell-proj-row"
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", border: "1px solid var(--s-border)", borderRadius: 10, textAlign: "left" }}
+                    >
+                      <IconLock size={15} />
+                      <span>
+                        <div style={{ fontWeight: 600, fontSize: 13.5 }}>Authenticator app</div>
+                        <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Google Authenticator, Authy, 1Password, etc. — no phone signal needed.</div>
+                      </span>
+                    </button>
+                  </div>
+                  <button type="button" onClick={resetMfaFlow} className="ghost" style={{ fontSize: 12 }}>Cancel</button>
                 </div>
               )}
 
               {mfaMode === "phone" && mfaStep === "start" && (
                 <form onSubmit={handleSendPhoneCode} className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
-                  <p style={{ fontSize: 13, marginBottom: 12 }}>Enter your phone number (with country code, e.g. +1 555 555 0100).</p>
+                  <div style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+                    Step 2 of 2 · Your phone number
+                  </div>
+                  <p style={{ fontSize: 13, marginBottom: 12 }}>Enter it with country code, e.g. +1 555 555 0100. We'll text a 6-digit code to it.</p>
                   <input
                     value={phoneNumber}
                     onChange={(e) => setPhoneNumber(e.target.value)}
@@ -668,7 +691,10 @@ export default function AccountSettingsPage() {
 
               {mfaMode === "phone" && mfaStep === "code" && (
                 <form onSubmit={handleConfirmPhoneCode} className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
-                  <p style={{ fontSize: 13, marginBottom: 12 }}>Enter the code we texted to {phoneNumber}.</p>
+                  <div style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+                    Step 2 of 2 · Enter the code
+                  </div>
+                  <p style={{ fontSize: 13, marginBottom: 12 }}>We texted a code to {phoneNumber}.</p>
                   <input
                     value={mfaCode}
                     onChange={(e) => setMfaCode(e.target.value)}
@@ -689,7 +715,10 @@ export default function AccountSettingsPage() {
 
               {mfaMode === "totp" && mfaStep === "start" && (
                 <div className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
-                  {mfaBusy && <p style={{ fontSize: 13 }}>Generating secret…</p>}
+                  <div style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+                    Step 2 of 2 · Setting up
+                  </div>
+                  {mfaBusy && <p style={{ fontSize: 13 }}>Generating your key…</p>}
                   {mfaError && <p style={{ fontSize: 12, color: "#e5534b" }}>{mfaError}</p>}
                   {mfaError && (
                     <button type="button" onClick={resetMfaFlow} className="ghost">Cancel</button>
@@ -699,7 +728,12 @@ export default function AccountSettingsPage() {
 
               {mfaMode === "totp" && mfaStep === "code" && totpSecret && (
                 <form onSubmit={handleConfirmTotp} className="shell-card" style={{ padding: 20, marginBottom: 30 }}>
-                  <p style={{ fontSize: 13, marginBottom: 12 }}>Scan this with your authenticator app (Google Authenticator, Authy, 1Password, etc.), or enter the key manually.</p>
+                  <div style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+                    Step 2 of 2 · Scan & confirm
+                  </div>
+                  <p style={{ fontSize: 13, marginBottom: 12 }}>
+                    Open your authenticator app, add a new account, and scan this — or enter the key manually if it can't scan.
+                  </p>
                   {totpQrUri && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={qrCodeUrl(totpQrUri, 180)} alt="TOTP QR code" style={{ display: "block", marginBottom: 12, borderRadius: 8, background: "#fff", padding: 8 }} />
@@ -707,6 +741,7 @@ export default function AccountSettingsPage() {
                   <p style={{ fontSize: 11, color: "var(--s-text-3)", marginBottom: 12, wordBreak: "break-all" }}>
                     Manual key: {totpSecret.secretKey}
                   </p>
+                  <p style={{ fontSize: 13, marginBottom: 8 }}>Then enter the 6-digit code it's showing:</p>
                   <input
                     value={mfaCode}
                     onChange={(e) => setMfaCode(e.target.value)}
