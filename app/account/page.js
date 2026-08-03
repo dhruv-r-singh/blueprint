@@ -202,7 +202,16 @@ export default function AccountSettingsPage() {
     if (entry.integration === "github") {
       return Boolean(integrations?.githubAccessToken);
     }
-    return null; // no integration attached to this provider (LinkedIn)
+    return null; // no secondary integration status for LinkedIn
+  }
+
+  // LinkedIn "connected" doesn't come from Firebase Auth's providerData like
+  // Google/GitHub — Firebase's OIDC connector can't actually complete a
+  // LinkedIn linking flow (see app/api/auth/linkedin/start/route.js), so
+  // "Connect" here saves straight to Firestore instead. See
+  // app/api/auth/linkedin/link-start/route.js.
+  function isLinkedinConnected() {
+    return Boolean(integrations?.linkedinConnected);
   }
 
   // Used both for a fresh link (provider not yet connected) and for
@@ -236,9 +245,45 @@ export default function AccountSettingsPage() {
     }
   }
 
+  // LinkedIn was never actually linked as a real Firebase Auth provider (see
+  // isLinkedinConnected above), so this is a full-page redirect out to
+  // LinkedIn and back — not a popup like Google/GitHub — landing back here
+  // via the `linkedinLinked` / `linkedinError` query params handled below.
+  async function handleLinkedInConnect() {
+    setError("");
+    setNotice("");
+    setBusy("oidc.linkedin");
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      const res = await fetch("/api/auth/linkedin/link-start", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ returnPath: "/account" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.url) throw new Error(data.error || "Couldn't start connecting LinkedIn.");
+      window.location.href = data.url;
+    } catch (err) {
+      setError(err.message || "Couldn't connect LinkedIn.");
+      setBusy(null);
+    }
+  }
+
   async function handleDisconnect(entry) {
     setError("");
     setNotice("");
+    if (entry.id === "oidc.linkedin") {
+      setBusy(entry.id);
+      try {
+        await saveFn()({ linkedinConnected: false });
+        setNotice("LinkedIn disconnected.");
+      } catch (err) {
+        setError("Couldn't disconnect LinkedIn. " + (err.message || "Try again."));
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
     if (linkedIds.size <= 1) {
       setError("You need at least one sign-in method connected. Link another before removing this one.");
       return;
@@ -261,6 +306,17 @@ export default function AccountSettingsPage() {
       setBusy(null);
     }
   }
+
+  // Landing back here from the LinkedIn redirect (see handleLinkedInConnect).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const linked = params.get("linkedinLinked");
+    const linkedinError = params.get("linkedinError");
+    if (!linked && !linkedinError) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    if (linkedinError) setError(linkedinError);
+    else setNotice("LinkedIn connected.");
+  }, []);
 
   function resetMfaFlow() {
     setMfaMode(null);
@@ -474,7 +530,7 @@ export default function AccountSettingsPage() {
               <p style={sectionLabelStyle()}>Connected accounts</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
                 {PROVIDERS.map((entry) => {
-                  const connected = linkedIds.has(entry.id);
+                  const connected = entry.id === "oidc.linkedin" ? isLinkedinConnected() : linkedIds.has(entry.id);
                   const integrated = hasIntegration(entry);
                   return (
                     <div
@@ -519,7 +575,13 @@ export default function AccountSettingsPage() {
                           </button>
                         )}
                         <button
-                          onClick={() => (connected ? handleDisconnect(entry) : grantOrRefresh(entry))}
+                          onClick={() =>
+                            connected
+                              ? handleDisconnect(entry)
+                              : entry.id === "oidc.linkedin"
+                              ? handleLinkedInConnect()
+                              : grantOrRefresh(entry)
+                          }
                           disabled={busy !== null}
                           className={connected ? "shell-btn-outline" : "shell-task-add-btn"}
                           style={{ height: 36, fontSize: 12 }}
@@ -536,6 +598,19 @@ export default function AccountSettingsPage() {
                 Drive folders / GitHub repos and chat attachments, no separate setup needed. Drive access now
                 renews itself in the background, so you shouldn't need "Refresh Drive access" above. It's
                 there as a manual fallback if it ever does lapse.
+              </div>
+
+              <p style={sectionLabelStyle()}>Discoverability</p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 30 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Discoverable</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>
+                    Let other members find you on a project's Matches tab and invite you in, based on your
+                    profile skills. Off hides you from every Matches list — existing projects you're already
+                    on aren't affected.
+                  </div>
+                </div>
+                <Toggle checked={prefs.discoverable !== false} onChange={(v) => savePreference({ discoverable: v })} />
               </div>
 
               <p style={sectionLabelStyle()}>Two-factor authentication</p>
@@ -780,12 +855,51 @@ export default function AccountSettingsPage() {
               </p>
 
               <p style={sectionLabelStyle()}>Layout</p>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 24 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 8 }}>
                 <div>
                   <div style={{ fontSize: 13.5, fontWeight: 600 }}>Compact mode</div>
                   <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Tighter spacing in chat and on task cards.</div>
                 </div>
                 <Toggle checked={Boolean(prefs.compactMode)} onChange={(v) => savePreference({ compactMode: v })} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Sharp corners</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Swaps the app's rounded cards/buttons for a crisper, squared-off look.</div>
+                </div>
+                <Toggle checked={prefs.cornerStyle === "sharp"} onChange={(v) => savePreference({ cornerStyle: v ? "sharp" : "rounded" })} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 24 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Sidebar on the right</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Moves the channel list and team rail to the right side of the screen.</div>
+                </div>
+                <Toggle checked={prefs.sidebarSide === "right"} onChange={(v) => savePreference({ sidebarSide: v ? "right" : "left" })} />
+              </div>
+
+              <p style={sectionLabelStyle()}>Chat display</p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Always show timestamps</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Off shows a message's time only when you hover it, like most chat apps.</div>
+                </div>
+                <Toggle checked={Boolean(prefs.alwaysShowTimestamps)} onChange={(v) => savePreference({ alwaysShowTimestamps: v })} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 24 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>24-hour clock</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Show message times as 14:30 instead of 2:30 PM.</div>
+                </div>
+                <Toggle checked={Boolean(prefs.use24HourClock)} onChange={(v) => savePreference({ use24HourClock: v })} />
+              </div>
+
+              <p style={sectionLabelStyle()}>Calendar</p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 24 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Week starts on Monday</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Affects the month grid on the Calendar tab. Off starts weeks on Sunday.</div>
+                </div>
+                <Toggle checked={Boolean(prefs.weekStartsMonday)} onChange={(v) => savePreference({ weekStartsMonday: v })} />
               </div>
 
               <p style={sectionLabelStyle()}>Your language</p>
@@ -815,12 +929,122 @@ export default function AccountSettingsPage() {
                 </div>
                 <Toggle checked={Boolean(prefs.messageSound)} onChange={(v) => savePreference({ messageSound: v })} />
               </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 10 }}>
                 <div>
                   <div style={{ fontSize: 13.5, fontWeight: 600 }}>Only for @mentions</div>
                   <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Limit the sound above to messages that mention you by name.</div>
                 </div>
                 <Toggle checked={Boolean(prefs.messageSoundMentionsOnly)} onChange={(v) => savePreference({ messageSoundMentionsOnly: v })} disabled={!prefs.messageSound} />
+              </div>
+              <div style={{ padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 10, opacity: prefs.messageSound ? 1 : 0.5 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Chime volume</div>
+                  <span style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>{Math.round((prefs.chimeVolume ?? 0.6) * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={prefs.chimeVolume ?? 0.6}
+                  onChange={(e) => savePreference({ chimeVolume: Number(e.target.value) })}
+                  disabled={!prefs.messageSound}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 24, opacity: prefs.messageSound ? 1 : 0.5 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Chime tone</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Pick which two-tone sound plays.</div>
+                </div>
+                <select
+                  value={prefs.chimeTone || "classic"}
+                  onChange={(e) => savePreference({ chimeTone: e.target.value })}
+                  disabled={!prefs.messageSound}
+                  className="shell-input"
+                  style={{ width: 140 }}
+                >
+                  <option value="classic">Classic</option>
+                  <option value="soft">Soft</option>
+                  <option value="chirp">Chirp</option>
+                  <option value="marimba">Marimba</option>
+                </select>
+              </div>
+
+              <p style={sectionLabelStyle()}>Presence</p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 24 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Auto-away</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>
+                    Switch your status to &ldquo;Away&rdquo; after this long with no activity in the app, and back to
+                    &ldquo;Available&rdquo; the moment you're back.
+                  </div>
+                </div>
+                <select
+                  value={prefs.autoAwayMinutes ?? 0}
+                  onChange={(e) => savePreference({ autoAwayMinutes: Number(e.target.value) })}
+                  className="shell-input"
+                  style={{ width: 110 }}
+                >
+                  <option value={0}>Off</option>
+                  <option value={5}>5 min</option>
+                  <option value={15}>15 min</option>
+                  <option value={30}>30 min</option>
+                </select>
+              </div>
+
+              <p style={sectionLabelStyle()}>Composing</p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Send with</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Shift+Enter is always a line break, either way.</div>
+                </div>
+                <select
+                  value={prefs.sendShortcut || "enter"}
+                  onChange={(e) => savePreference({ sendShortcut: e.target.value })}
+                  className="shell-input"
+                  style={{ width: 150 }}
+                >
+                  <option value="enter">Enter</option>
+                  <option value="ctrlEnter">Ctrl/Cmd + Enter</option>
+                </select>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Quick-react emoji</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Shown first when you hover a message, before opening the full picker.</div>
+                </div>
+                <select
+                  value={prefs.defaultReactionEmoji || "👍"}
+                  onChange={(e) => savePreference({ defaultReactionEmoji: e.target.value })}
+                  className="shell-input"
+                  style={{ width: 90, fontSize: 16 }}
+                >
+                  {["👍", "❤️", "😂", "🎉", "👀", "🔥"].map((e) => (
+                    <option key={e} value={e}>{e}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Ask before deleting a message</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Off deletes your message immediately, no confirmation popup.</div>
+                </div>
+                <Toggle checked={prefs.confirmMessageDelete !== false} onChange={(v) => savePreference({ confirmMessageDelete: v })} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Auto-translate incoming messages</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Translates messages into your language automatically instead of needing the Translate action.</div>
+                </div>
+                <Toggle checked={Boolean(prefs.autoTranslate)} onChange={(v) => savePreference({ autoTranslate: v })} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10 }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>Autoplay voice messages</div>
+                  <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>Plays a voice message as soon as it arrives instead of waiting for you to press play.</div>
+                </div>
+                <Toggle checked={Boolean(prefs.autoPlayVoiceMessages)} onChange={(v) => savePreference({ autoPlayVoiceMessages: v })} />
               </div>
             </>
           )}

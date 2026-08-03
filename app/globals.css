@@ -167,6 +167,24 @@ body.light-mode {
   background: #ffffff;
 }
 
+/* Sharp corners — toggled from Preferences → Appearance → Layout. Every
+   rounded corner in this app comes from an inline `borderRadius` (or the
+   --s-radius-* variables a few shared classes use), not one central
+   variable, so a blunt `!important` override here is the only way to affect
+   all of them at once from a single class without touching hundreds of
+   inline style objects across the app. */
+body.sharp-corners * {
+  border-radius: 0 !important;
+}
+
+/* Sidebar on the right — toggled from Preferences → Appearance → Layout.
+   .shell-body is the flex row holding the channel sidebar and the main
+   content; reversing it visually moves the sidebar to the other side
+   without any component needing to know about this preference. */
+body.sidebar-right .shell-body {
+  flex-direction: row-reverse;
+}
+
 .shell-topbar {
   height: 60px;
   flex: none;
@@ -892,8 +910,32 @@ body.compact-mode .shell-task-card {
   margin: -6px -8px;
   padding: 6px 8px;
 }
+/* Consecutive messages from the same sender (within a few minutes) collapse
+   the gap between them — the avatar/name only show on the first one, so a
+   full 16px gap between every line reads as one message per person instead
+   of one continuous exchange. */
+.shell-msg.grouped {
+  margin-top: -10px;
+}
 .shell-msg:hover {
   background: rgba(255, 255, 255, 0.03);
+}
+
+/* "Always show timestamps" (Preferences → Appearance → Chat display) — off
+   by default, matching most chat apps: a timestamp only shows up next to a
+   sender's name when you hover that message. On pins it visible all the
+   time via the body class TopNav.js toggles. */
+.shell-msg-time {
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--s-text-3);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.shell-msg:hover .shell-msg-time,
+body.always-show-msg-times .shell-msg-time {
+  opacity: 1;
 }
 
 /* Small floating action bar (Reply / Translate / React) that appears over
@@ -1210,6 +1252,7 @@ button.ghost:hover {
   bottom: 26px;
   left: 0;
   display: flex;
+  flex-direction: column;
   gap: 4px;
   background: var(--s-bg-side);
   border: 1px solid var(--s-border);
@@ -1730,4 +1773,54 @@ input[type="range"]::-moz-range-thumb {
 .shell-video-volume::-webkit-slider-thumb {
   background: #fff !important;
   border-color: rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Custom audio player (attachments + voice messages) — same control
+   language as .shell-video-* above, but light-on-dark since it sits
+   inline in the chat bubble rather than over a video frame. */
+.shell-audio-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--s-bg-elevated);
+  border: 1px solid var(--s-border);
+  border-radius: 999px;
+  max-width: 300px;
+}
+.shell-audio-play-btn {
+  background: var(--s-amber);
+  color: var(--s-amber-ink, #17181a);
+  border: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+}
+.shell-audio-player .shell-audio-play-btn:last-of-type {
+  background: transparent;
+  color: var(--s-text-3);
+  width: 20px;
+  height: 20px;
+}
+.shell-audio-time {
+  font-size: 10px;
+  color: var(--s-text-3);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+  white-space: nowrap;
+}
+.shell-audio-seek {
+  flex: 1;
+  width: auto !important;
+  height: 3px !important;
+  min-width: 60px;
+}
+.shell-audio-volume {
+  width: 44px !important;
+  height: 3px !important;
 }

@@ -27,11 +27,28 @@ export async function POST(request) {
     .join("\n\n");
 
   try {
-    const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent(fullPrompt)}?model=openai`, {
-      headers: { accept: "text/plain" },
+    // Pollinations moved to a Pollen-credit system — the anonymous/no-key
+    // tier only gets a small free weekly budget, which isn't enough for
+    // the "openai" model (shows up as a 402 Payment Required). A free
+    // account (no credit card) at https://enter.pollinations.ai gets you
+    // an API key with a real free-tier budget — set it as the
+    // POLLINATIONS_API_KEY env var in Vercel and it'll be used
+    // automatically; without it, this still tries anonymously, which may
+    // work for lighter/default models but not "openai" specifically.
+    const key = process.env.POLLINATIONS_API_KEY;
+    const url = `https://text.pollinations.ai/${encodeURIComponent(fullPrompt)}?model=openai`;
+    const res = await fetch(url, {
+      headers: {
+        accept: "text/plain",
+        ...(key ? { authorization: `Bearer ${key}` } : {}),
+      },
     });
     if (!res.ok) {
-      return NextResponse.json({ error: `AI service returned ${res.status}.` }, { status: 502 });
+      const detail =
+        res.status === 402
+          ? "The free AI service's credit budget is exhausted (set POLLINATIONS_API_KEY for a real free-tier budget)."
+          : `AI service returned ${res.status}.`;
+      return NextResponse.json({ error: detail }, { status: 502 });
     }
     const text = (await res.text()).trim();
 

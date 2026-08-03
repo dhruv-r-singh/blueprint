@@ -6,7 +6,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../../lib/firebase";
 import { searchSkills } from "../../lib/skillsCatalog";
-import { listPublicGithubRepos } from "../../lib/integrations";
+import { listPublicGithubRepos, integrationsDocPath } from "../../lib/integrations";
 import { uploadFile } from "../../lib/storage";
 import { useAuthGate } from "../../lib/useAuthGate";
 import Autocomplete from "../components/Autocomplete";
@@ -35,6 +35,7 @@ export default function ProfilePage() {
   const [linkedinUrl, setLinkedinUrl] = useState("");
   const [linkedinDraft, setLinkedinDraft] = useState("");
   const [editingLinkedin, setEditingLinkedin] = useState(false);
+  const [linkedinConnected, setLinkedinConnected] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
@@ -47,13 +48,47 @@ export default function ProfilePage() {
     if (!user) return;
     (async () => {
       const snap = await getDoc(doc(db, "profiles", user.uid));
+      let ghUsername = "";
       if (snap.exists()) {
         setSkills(snap.data().skills || []);
         setHeadline(snap.data().headline || "");
-        setGithubUsername(snap.data().githubUsername || "");
+        ghUsername = snap.data().githubUsername || "";
+        setGithubUsername(ghUsername);
         setAvatarUrl(snap.data().avatarUrl || "");
         setPortfolio(snap.data().portfolio || []);
         setLinkedinUrl(snap.data().linkedinUrl || "");
+      }
+
+      // The private integrations doc also holds LinkedIn's "connected" flag
+      // (see app/api/auth/linkedin/link-start/route.js — LinkedIn is never a
+      // real Firebase Auth provider link, just a Firestore record) and, if
+      // GitHub is connected, the access token — read it once for both.
+      try {
+        const integSnap = await getDoc(doc(db, ...integrationsDocPath(user.uid)));
+        const integData = integSnap.exists() ? integSnap.data() : {};
+        setLinkedinConnected(Boolean(integData.linkedinConnected));
+
+        // Self-heal: accounts that connected GitHub before saveGithubCredential
+        // started looking up + saving the username (or where that one-time
+        // lookup silently failed) end up with a real githubAccessToken but no
+        // githubUsername on their profile — since Firebase's provider linking
+        // only happens once, there's no "Connect" button left to re-trigger
+        // the lookup. If we find that gap, do the lookup now with the token
+        // that's already saved, same as a fresh connect would.
+        if (!ghUsername && integData.githubAccessToken) {
+          const res = await fetch("https://api.github.com/user", {
+            headers: { Authorization: `Bearer ${integData.githubAccessToken}`, accept: "application/vnd.github+json" },
+          });
+          if (res.ok) {
+            const me = await res.json();
+            if (me.login) {
+              await setDoc(doc(db, "profiles", user.uid), { githubUsername: me.login }, { merge: true });
+              setGithubUsername(me.login);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Couldn't load integrations doc:", err);
       }
     })();
   }, [user]);
@@ -168,7 +203,9 @@ export default function ProfilePage() {
   // auto-derive github.com/{username}-style; a real profile link can only
   // come from the person typing it in themselves (see the Links section
   // below), gated on having actually linked LinkedIn as a sign-in method.
-  const linkedinConnected = (user?.providerData || []).some((p) => p.providerId === "oidc.linkedin");
+  // linkedinConnected state is set from the integrations doc above — see the
+  // comment there for why this isn't derived from user.providerData like
+  // Google/GitHub.
 
   // Hard auth gate: render nothing at all — not even the topbar — until we
   // know for sure someone's signed in. useAuthGate above sends

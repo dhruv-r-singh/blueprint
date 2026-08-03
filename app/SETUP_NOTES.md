@@ -89,11 +89,29 @@ LinkedIn" on `/signin` and `/join/[code]` will work as a normal full-page
 redirect (no popup, so this also works inside the Electron shell, which
 popup-based sign-in never reliably did).
 
-**Known limitation:** the "Connect LinkedIn" button in Preferences
-(`/account`, for *linking* LinkedIn to an already-signed-in account so its
-profile URL shows up on your profile page) still goes through the old,
-broken Firebase OIDC connector and will hit the same error — that's a
-separate code path from primary sign-in and hasn't been migrated yet.
+**"Connect LinkedIn" in Preferences** (`/account`) now works too, and
+doesn't need any extra LinkedIn app config beyond what's above — it reuses
+the exact same callback URL. It's a different code path from sign-in,
+though, because Firebase Auth has no supported way to attach an arbitrary
+OIDC identity to an *already signed-in* user from the server (linking is a
+client-only operation, and needs precisely the credential verification
+Firebase's connector can't do for LinkedIn). So rather than trying to make
+LinkedIn a real Firebase Auth provider on the account:
+
+- `app/api/auth/linkedin/link-start/route.js` — like `start/route.js`, but a
+  POST that takes the caller's Firebase ID token (verified via the Admin
+  SDK) and stashes their uid in a short-lived httpOnly cookie before
+  redirecting to Linkedin.
+- `app/api/auth/linkedin/callback/route.js` — when that cookie is present,
+  it saves the LinkedIn profile straight onto
+  `profiles/{uid}/private/integrations` (`linkedinConnected: true` +
+  name/email/sub) instead of minting a sign-in custom token, then redirects
+  back to `/account`.
+
+"Connected" in Preferences and on the profile page reads that
+`linkedinConnected` flag, not `user.providerData` — LinkedIn will never show
+up in Firebase Auth's own provider list for an account connected this way,
+which is expected.
 
 ## Firestore rules — invite links now need one more rule
 
@@ -566,21 +584,32 @@ not nested inside it):
 
 ```
 match /messageRequests/{requestId} {
-  // Anyone signed in can send one, but only as themselves.
+  // Anyone signed in can send one, but only as themselves, and it always
+  // starts pending with an empty reply thread.
   allow create: if request.auth != null
-    && request.resource.data.fromUid == request.auth.uid;
+    && request.resource.data.fromUid == request.auth.uid
+    && request.resource.data.status == 'pending'
+    && request.resource.data.replies.size() == 0;
   // Only the sender or the recipient can read a given request.
   allow read: if request.auth != null
     && (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid);
-  // Only the recipient can update one, and only to flip `read` to true —
-  // nothing else about the request is editable after it's sent.
+  // Only the recipient can flip `read`, or accept/deny a still-pending
+  // request. Once accepted, either side (sender or recipient) can append to
+  // `replies` — that's the capped little reply thread in the mailbox — but
+  // nothing else about the request is ever editable after it's sent.
   allow update: if request.auth != null
-    && resource.data.toUid == request.auth.uid
-    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+    && (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid)
+    && (
+      (resource.data.toUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'status']))
+      || (resource.data.status == 'accepted'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['replies']))
+    );
 }
 ```
 
-No reply feature yet — the mailbox is read-only for now (mark-as-read
-happens automatically when you click a request open). If you want a reply
-box added, it's a small follow-up: another field or subcollection plus a
-form in `Mailbox.js`.
+Reply threads unlock once the recipient accepts a request (Accept/Deny buttons
+show on a pending one in the mailbox). Deliberately not real chat — `replies`
+is a plain array on the request doc, capped client-side at
+`MAX_THREAD_LENGTH` (8 total messages) in `Mailbox.js`, both sides can add to
+it once accepted, and a denied request never unlocks it.

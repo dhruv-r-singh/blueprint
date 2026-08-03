@@ -43,6 +43,7 @@ import CADViewer, { guessCadKind } from "../../components/CADViewer";
 import GuidedTour from "../../components/GuidedTour";
 import MessageRequestModal from "../../components/MessageRequestModal";
 import VideoPlayer from "../../components/VideoPlayer";
+import AudioPlayer from "../../components/AudioPlayer";
 import Toggle from "../../components/Toggle";
 import { IconGear, IconMic, IconSparkle, IconLayout, IconCheckSquare, IconTarget, IconCalendar, IconChat, IconGithubMark, IconDriveMark, IconReply, IconReact, IconTranslate, IconSearch, IconMailbox } from "../../components/icons";
 import { focusModeInfo } from "../../components/FocusMode";
@@ -214,6 +215,7 @@ export default function ProjectPage() {
   const [chatFileError, setChatFileError] = useState("");
   const [alsoAddToDrive, setAlsoAddToDrive] = useState(false);
   const [openReactionPicker, setOpenReactionPicker] = useState(null);
+  const [customReactionInput, setCustomReactionInput] = useState("");
   const [events, setEvents] = useState([]);
   const [eventTitle, setEventTitle] = useState("");
   const [eventDate, setEventDate] = useState("");
@@ -229,6 +231,12 @@ export default function ProjectPage() {
   const mediaRecorderRef = useRef(null);
   const knownMessageIdsRef = useRef(new Set());
   const messagesFirstLoadRef = useRef(true);
+  const msgsEndRef = useRef(null);
+  // "Autoplay voice messages" (Preferences → Notifications → Composing) —
+  // ids of voice messages that just arrived, so AudioPlayer knows to
+  // autoplay only those and never a voice message you're scrolling past in
+  // history. Populated by the same effect that detects new messages below.
+  const [autoPlayVoiceIds, setAutoPlayVoiceIds] = useState(new Set());
   const recordChunksRef = useRef([]);
   const recordTimerRef = useRef(null);
   const recordCancelledRef = useRef(false);
@@ -379,6 +387,10 @@ export default function ProjectPage() {
         setAllProfiles(
           snap.docs
             .filter((d) => !memberSet.has(d.id))
+            // Discoverable defaults to on (undefined !== false) so existing
+            // accounts keep showing up here unless they explicitly opt out
+            // via the "Discoverable" switch in Preferences.
+            .filter((d) => d.data()?.preferences?.discoverable !== false)
             .map((d) => ({ uid: d.id, ...d.data() }))
         );
       } catch (err) {
@@ -388,7 +400,10 @@ export default function ProjectPage() {
   }, [tab, user, project?.memberIds]);
 
   useEffect(() => {
-    if ((tab !== "chat" && tab !== "files") || !id) return;
+    // Deliberately NOT gated on tab (beyond needing a project loaded) — the
+    // "new message" chime below needs this subscription live no matter which
+    // tab of the project is open, not just while literally staring at Chat.
+    if (!id) return;
     // Starting fresh for this project — don't let the "new message" sound
     // effect below treat the initial bulk load as a wave of new messages.
     knownMessageIdsRef.current = new Set();
@@ -398,7 +413,18 @@ export default function ProjectPage() {
       setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
     return () => unsub();
-  }, [tab, id]);
+    // Deliberately excludes `tab` — re-subscribing on every tab switch would
+    // reset knownMessageIdsRef and risk re-chiming for messages that arrived
+    // while on a different tab, which defeats the point of this change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  // Keep the chat pinned to the newest message — runs on every messages
+  // change (new send, delete, reaction, etc.) while the chat tab is open.
+  useEffect(() => {
+    if (tab !== "chat") return;
+    msgsEndRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, tab]);
 
   // "Sound on new message" / "Only for @mentions" preferences (Preferences
   // → Notifications). Plays a short two-tone chime via the Web Audio API
@@ -413,26 +439,54 @@ export default function ProjectPage() {
       return;
     }
     const prefs = memberProfiles[user?.uid]?.preferences || {};
+    const myFocusMode = memberProfiles[user?.uid]?.focusMode || "available";
     const newOnes = messages.filter((m) => !knownMessageIdsRef.current.has(m.id) && m.senderId !== user?.uid);
     knownMessageIdsRef.current = new Set(incomingIds);
-    if (newOnes.length === 0 || !prefs.messageSound) return;
+    if (newOnes.length === 0) return;
+
+    // "Auto-translate incoming messages" (Preferences → Notifications →
+    // Composing) — independent of the chime settings below, so it still
+    // works with sound off. Only text messages have anything to translate.
+    if (prefs.autoTranslate) {
+      newOnes.filter((m) => (!m.type || m.type === "text") && m.text).forEach((m) => translateMessage(m));
+    }
+    if (prefs.autoPlayVoiceMessages) {
+      const voiceIds = newOnes.filter((m) => m.type === "voice").map((m) => m.id);
+      if (voiceIds.length > 0) setAutoPlayVoiceIds((prev) => new Set([...prev, ...voiceIds]));
+    }
+
+    // Only chime while status is "Available" — Focusing/In a meeting/Away
+    // all mean "don't ping me." (Profile, Preferences, and Sign-in never
+    // mount this component at all, so those are excluded automatically.)
+    if (!prefs.messageSound || myFocusMode !== "available") return;
     const relevant = prefs.messageSoundMentionsOnly ? newOnes.some((m) => m.mentions?.includes(user?.uid)) : true;
     if (!relevant) return;
     try {
+      // Chime tone + volume (Preferences → Notifications → Chat). Each
+      // preset is just a different frequency sequence and gain envelope —
+      // no audio files to ship/load, same as the original two-tone chime.
+      const peak = 0.12 * (prefs.chimeVolume ?? 0.6) * (1 / 0.6);
+      const tones = {
+        classic: { freqs: [740, 990], step: 0.09, hold: 0.16 },
+        soft: { freqs: [520, 660], step: 0.11, hold: 0.22 },
+        chirp: { freqs: [900, 1300, 1700], step: 0.06, hold: 0.1 },
+        marimba: { freqs: [660, 880, 660], step: 0.1, hold: 0.2 },
+      };
+      const { freqs, step, hold } = tones[prefs.chimeTone] || tones.classic;
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       const now = ctx.currentTime;
-      [740, 990].forEach((freq, i) => {
+      freqs.forEach((freq, i) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.frequency.value = freq;
         osc.connect(gain);
         gain.connect(ctx.destination);
-        const start = now + i * 0.09;
+        const start = now + i * step;
         gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.exponentialRampToValueAtTime(0.12, start + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+        gain.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0001), start + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + hold);
         osc.start(start);
-        osc.stop(start + 0.18);
+        osc.stop(start + hold + 0.02);
       });
     } catch (err) {
       // Some browsers block audio until the user has interacted with the
@@ -712,8 +766,20 @@ export default function ProjectPage() {
       subject,
       message,
       read: false,
+      // Gates replies: a stranger's first message needs an explicit Accept
+      // before either side can go back and forth — see Mailbox.js.
+      status: "pending",
+      replies: [],
       createdAt: serverTimestamp(),
     });
+  }
+
+  /** True if two messages were sent within 5 minutes of each other — used to decide whether consecutive messages from the same sender should visually collapse into one group. */
+  function withinGroupWindow(a, b) {
+    const at = a?.toMillis ? a.toMillis() : null;
+    const bt = b?.toMillis ? b.toMillis() : null;
+    if (!at || !bt) return false;
+    return Math.abs(at - bt) < 5 * 60 * 1000;
   }
 
   /** True if a message's visible text/caption/attachment title/sender name contains the search query (case-insensitive). */
@@ -761,11 +827,38 @@ export default function ProjectPage() {
       if (!res.ok) throw new Error(data.error || "Couldn't translate that message.");
       setTranslations((prev) => ({
         ...prev,
-        [m.id]: { text: data.translatedText, loading: false, error: "", lang: target, sameLanguage: Boolean(data.sameLanguage) },
+        [m.id]: {
+          text: data.translatedText,
+          loading: false,
+          error: "",
+          lang: target,
+          detected: data.detected || "",
+          sameLanguage: Boolean(data.sameLanguage),
+        },
       }));
     } catch (err) {
       setTranslations((prev) => ({ ...prev, [m.id]: { loading: false, error: err.message || "Couldn't translate that message." } }));
     }
+  }
+
+  /** Turns a language code ("es", "fr") into a readable name ("Spanish") via the browser's own locale data — falls back to the raw code if that API isn't available. */
+  function languageName(code) {
+    if (!code) return "";
+    try {
+      return new Intl.DisplayNames([navigator.language || "en"], { type: "language" }).of(code) || code;
+    } catch {
+      return code;
+    }
+  }
+
+  /** Formats a message's Firestore Timestamp per the "24-hour clock" preference (Preferences → Appearance → Chat display). */
+  function formatMsgTime(ts) {
+    if (!ts?.toDate) return "";
+    return ts.toDate().toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: memberProfiles[user?.uid]?.preferences?.use24HourClock ? false : true,
+    });
   }
 
   function dismissTranslation(messageId) {
@@ -1084,6 +1177,18 @@ export default function ProjectPage() {
   }
 
   const REACTION_EMOJI = ["👍", "❤️", "😂", "🎉", "😮", "👀"];
+
+  /** Sender-only delete — the button that calls this is itself only ever rendered for the sender's own messages, and the Firestore rule for `messages` should mirror that (see SETUP_NOTES.md). */
+  async function deleteMessage(message) {
+    if (!user || message.senderId !== user.uid) return;
+    const shouldConfirm = memberProfiles[user.uid]?.preferences?.confirmMessageDelete !== false;
+    if (shouldConfirm && !window.confirm("Delete this message? This can't be undone.")) return;
+    try {
+      await deleteDoc(doc(db, "projects", id, "messages", message.id));
+    } catch (err) {
+      console.error("Failed to delete message:", err);
+    }
+  }
 
   async function toggleReaction(message, emoji) {
     if (!user) return;
@@ -1788,9 +1893,24 @@ export default function ProjectPage() {
                             <span className="shell-presence-wrap">
                               {profile.avatarUrl ? (
                                 // eslint-disable-next-line @next/next/no-img-element
-                                <img src={profile.avatarUrl} alt="" style={{ width: 26, height: 26, borderRadius: "50%", objectFit: "cover" }} />
+                                <img
+                                  src={profile.avatarUrl}
+                                  alt=""
+                                  style={{
+                                    width: 26,
+                                    height: 26,
+                                    borderRadius: "50%",
+                                    objectFit: "cover",
+                                    ...(focusModeInfo(profile.focusMode) ? { boxShadow: `0 0 0 2px ${focusModeInfo(profile.focusMode).color}` } : {}),
+                                  }}
+                                />
                               ) : (
-                                <span className="shell-avatar">{(name || "?")[0]?.toUpperCase()}</span>
+                                <span
+                                  className="shell-avatar"
+                                  style={focusModeInfo(profile.focusMode) ? { boxShadow: `0 0 0 2px ${focusModeInfo(profile.focusMode).color}` } : undefined}
+                                >
+                                  {(name || "?")[0]?.toUpperCase()}
+                                </span>
                               )}
                               <span className={"shell-presence-dot" + (online ? " online" : "")} title={online ? "Online" : lastSeenLabel(profile.lastActiveAt)} />
                             </span>
@@ -2016,7 +2136,11 @@ export default function ProjectPage() {
               (byDay[key] ||= []).push({ id: g.id, title: g.summary || "(untitled)", url: g.htmlLink, google: true });
             }
 
-            const startWeekday = calMonth.getDay();
+            // "Week starts on Monday" (Preferences → Appearance → Calendar) —
+            // shifts both the grid's leading padding and the day-of-week
+            // header row below (0 = the week's first column either way).
+            const mondayStart = Boolean(memberProfiles[user?.uid]?.preferences?.weekStartsMonday);
+            const startWeekday = mondayStart ? (calMonth.getDay() + 6) % 7 : calMonth.getDay();
             const gridStart = new Date(calMonth.getFullYear(), calMonth.getMonth(), 1 - startWeekday);
             const todayKey = localKey(new Date());
             const cells = Array.from({ length: 42 }, (_, i) => {
@@ -2047,7 +2171,10 @@ export default function ProjectPage() {
               </div>
 
               <div className="shell-cal-grid">
-                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+                {(mondayStart
+                  ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                  : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+                ).map((d) => (
                   <div key={d} className="shell-cal-dow">{d}</div>
                 ))}
                 {cells.map((d, i) => {
@@ -2366,11 +2493,19 @@ export default function ProjectPage() {
                       No messages match &ldquo;{chatSearch.trim()}&rdquo;.
                     </div>
                   )}
-                  {messages.filter((m) => messageMatchesSearch(m, chatSearch)).map((m) => {
+                  {(() => {
+                    const visible = messages.filter((m) => messageMatchesSearch(m, chatSearch));
+                    return visible.map((m, i) => {
                     const isTextMsg = !m.type || m.type === "text";
                     const canTranslate = isTextMsg && m.text && !translations[m.id]?.sameLanguage;
+                    const prevM = visible[i - 1];
+                    const grouped = Boolean(
+                      prevM && prevM.senderId === m.senderId && !m.replyTo && withinGroupWindow(prevM.createdAt, m.createdAt)
+                    );
+                    const fm = focusModeInfo(memberProfiles[m.senderId]?.focusMode);
+                    const ringStyle = fm ? { boxShadow: `0 0 0 2px ${fm.color}` } : undefined;
                     return (
-                    <div key={m.id} className={"shell-msg" + (m.mentions?.includes(user?.uid) ? " mentioned" : "")}>
+                    <div key={m.id} className={"shell-msg" + (m.mentions?.includes(user?.uid) ? " mentioned" : "") + (grouped ? " grouped" : "")}>
                       <div className="shell-msg-actions">
                         <button type="button" className="shell-msg-action-btn" title="Reply" onClick={() => startReply(m)}>
                           <IconReply size={13} />
@@ -2380,6 +2515,17 @@ export default function ProjectPage() {
                             <IconTranslate size={13} />
                           </button>
                         )}
+                        {/* One-click "Quick-react emoji" (Preferences → Notifications →
+                            Composing) — reacts instantly with your chosen default emoji;
+                            the button below still opens the full picker for anything else. */}
+                        <button
+                          type="button"
+                          className="shell-msg-action-btn"
+                          title="Quick react"
+                          onClick={() => toggleReaction(m, memberProfiles[user?.uid]?.preferences?.defaultReactionEmoji || "👍")}
+                        >
+                          {memberProfiles[user?.uid]?.preferences?.defaultReactionEmoji || "👍"}
+                        </button>
                         <span style={{ position: "relative" }}>
                           <button
                             type="button"
@@ -2391,21 +2537,45 @@ export default function ProjectPage() {
                           </button>
                           {openReactionPicker === m.id && (
                             <div className="shell-reaction-picker" style={{ position: "absolute", top: "calc(100% + 6px)", bottom: "auto", left: "auto", right: 0 }}>
-                              {REACTION_EMOJI.map((emoji) => (
-                                <button key={emoji} type="button" onClick={() => toggleReaction(m, emoji)}>
-                                  {emoji}
-                                </button>
-                              ))}
+                              <div style={{ display: "flex", gap: 4 }}>
+                                {REACTION_EMOJI.map((emoji) => (
+                                  <button key={emoji} type="button" onClick={() => toggleReaction(m, emoji)}>
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                              <form
+                                onSubmit={(e) => {
+                                  e.preventDefault();
+                                  const val = customReactionInput.trim();
+                                  if (val) toggleReaction(m, val);
+                                  setCustomReactionInput("");
+                                }}
+                                style={{ display: "flex", marginTop: 4, borderTop: "1px solid var(--s-border)", paddingTop: 4 }}
+                              >
+                                <input
+                                  value={customReactionInput}
+                                  onChange={(e) => setCustomReactionInput(e.target.value)}
+                                  placeholder="Any emoji…"
+                                  maxLength={8}
+                                  style={{ width: "100%", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", borderRadius: 6, padding: "4px 6px", fontSize: 13, color: "var(--s-text)" }}
+                                />
+                              </form>
                             </div>
                           )}
                         </span>
+                        {m.senderId === user?.uid && (
+                          <button type="button" className="shell-msg-action-btn" title="Delete" onClick={() => deleteMessage(m)}>
+                            ×
+                          </button>
+                        )}
                       </div>
-                      <span className="shell-presence-wrap" style={{ marginTop: 2 }}>
+                      <span className="shell-presence-wrap" style={{ marginTop: 2, visibility: grouped ? "hidden" : "visible" }}>
                         {memberProfiles[m.senderId]?.avatarUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={memberProfiles[m.senderId].avatarUrl} alt="" className="shell-avatar" />
+                          <img src={memberProfiles[m.senderId].avatarUrl} alt="" className="shell-avatar" style={ringStyle} />
                         ) : (
-                          <span className="shell-avatar">{m.senderName?.[0]?.toUpperCase()}</span>
+                          <span className="shell-avatar" style={ringStyle}>{m.senderName?.[0]?.toUpperCase()}</span>
                         )}
                         {(() => {
                           void presenceTick;
@@ -2420,7 +2590,12 @@ export default function ProjectPage() {
                             <b>{m.replyTo.senderName}</b>: {m.replyTo.text.length > 80 ? m.replyTo.text.slice(0, 80) + "…" : m.replyTo.text}
                           </div>
                         )}
-                        <b>{m.senderName}</b>
+                        {!grouped && (
+                          <span>
+                            <b>{m.senderName}</b>
+                            <span className="shell-msg-time">{formatMsgTime(m.createdAt)}</span>
+                          </span>
+                        )}
 
                         {isTextMsg && (
                           <>
@@ -2438,6 +2613,11 @@ export default function ProjectPage() {
                             )}
                             {translations[m.id]?.text && !translations[m.id]?.sameLanguage && (
                               <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid var(--s-border)" }}>
+                                {translations[m.id]?.detected && (
+                                  <div style={{ fontSize: 10.5, color: "var(--s-text-3)", marginBottom: 2 }}>
+                                    Translated from {languageName(translations[m.id].detected)}
+                                  </div>
+                                )}
                                 <p style={{ fontStyle: "italic" }}>{translations[m.id].text}</p>
                                 <button
                                   type="button"
@@ -2464,7 +2644,7 @@ export default function ProjectPage() {
                               <VideoPlayer src={m.url} style={{ width: 320, maxWidth: 360 }} />
                             )}
                             {m.provider === "upload" && m.fileType?.startsWith("audio/") && (
-                              <audio src={m.url} controls style={{ maxWidth: 320 }} />
+                              <AudioPlayer src={m.url} style={{ maxWidth: 320 }} />
                             )}
                             {m.provider === "upload" && m.fileType === "application/pdf" && (
                               <a href={m.url} target="_blank" rel="noopener noreferrer" style={{ display: "block" }}>
@@ -2508,12 +2688,7 @@ export default function ProjectPage() {
 
                         {m.type === "voice" && (
                           <div className="shell-voice-msg">
-                            <audio controls src={m.url} style={{ height: 34, maxWidth: 260 }} />
-                            {m.duration ? (
-                              <span className="shell-attachment-meta">
-                                {String(Math.floor(m.duration / 60)).padStart(1, "0")}:{String(m.duration % 60).padStart(2, "0")}
-                              </span>
-                            ) : null}
+                            <AudioPlayer src={m.url} voice style={{ maxWidth: 260 }} autoPlay={autoPlayVoiceIds.has(m.id)} />
                           </div>
                         )}
 
@@ -2575,7 +2750,9 @@ export default function ProjectPage() {
                       </div>
                     </div>
                     );
-                  })}
+                  });
+                  })()}
+                  <div ref={msgsEndRef} />
                   {messages.length === 0 && (
                     <p style={{ fontSize: 12, color: "var(--s-text-3)" }}>No messages yet, say hi.</p>
                   )}
@@ -2785,6 +2962,17 @@ export default function ProjectPage() {
                           <div className="shell-proj-row" onClick={() => { sendActivitiesRef(); setComposerMenuOpen(false); }}>
                             Open whiteboard
                           </div>
+                          <div
+                            className="shell-proj-row"
+                            onClick={() => {
+                              summarizeChat();
+                              setComposerMenuOpen(false);
+                            }}
+                            style={{ display: "flex", alignItems: "center", gap: 6 }}
+                          >
+                            <IconSparkle size={12} />
+                            Summarize with AI
+                          </div>
                         </div>
                       )}
                     </div>
@@ -2807,7 +2995,23 @@ export default function ProjectPage() {
                       <input
                         value={msgText}
                         onChange={handleMsgTextChange}
-                        onKeyDown={(e) => e.key === "Escape" && setMentionOpen(false)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            setMentionOpen(false);
+                            return;
+                          }
+                          // "Send with" preference (Preferences → Notifications →
+                          // Composing) — default "enter" leaves the input's normal
+                          // submit-on-Enter behavior alone; "ctrlEnter" swallows a
+                          // plain Enter (so it does nothing) and only sends on
+                          // Ctrl/Cmd+Enter, for people who'd rather not risk an
+                          // accidental send.
+                          if (e.key !== "Enter") return;
+                          const shortcut = memberProfiles[user?.uid]?.preferences?.sendShortcut || "enter";
+                          if (shortcut !== "ctrlEnter") return;
+                          if (e.metaKey || e.ctrlKey) sendMessage(e);
+                          else e.preventDefault();
+                        }}
                         placeholder={stagedAttachment ? "Add a caption (optional)" : "Message the team, @ to mention someone"}
                         style={{ width: "100%" }}
                       />
@@ -2828,11 +3032,11 @@ export default function ProjectPage() {
                 {recordError && <div style={{ fontSize: 11.5, color: "#e5534b", padding: "0 14px 10px" }}>{recordError}</div>}
               </div>
 
-              <div style={{ width: 180, flex: "none", overflowY: "auto", paddingTop: 4 }}>
+              <div style={{ width: 216, flex: "none", overflowY: "auto", paddingTop: 4 }}>
                 <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
                   Team ({(project?.memberIds || []).length})
                 </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   {(project?.memberIds || [])
                     .slice()
                     .sort((a, b) => {
@@ -2846,19 +3050,26 @@ export default function ProjectPage() {
                       const profile = memberProfiles[uid] || {};
                       const online = isOnline(profile.lastActiveAt);
                       const name = profile.name || (uid === user?.uid ? user?.displayName || user?.email : "Member");
+                      const fm = focusModeInfo(profile.focusMode);
+                      const ringStyle = fm ? { boxShadow: `0 0 0 2px ${fm.color}` } : undefined;
                       return (
-                        <div key={uid} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div key={uid} style={{ display: "flex", alignItems: "center", gap: 9 }}>
                           <span className="shell-presence-wrap">
                             {profile.avatarUrl ? (
                               // eslint-disable-next-line @next/next/no-img-element
-                              <img src={profile.avatarUrl} alt="" className="shell-avatar" style={{ width: 24, height: 24 }} />
+                              <img src={profile.avatarUrl} alt="" className="shell-avatar" style={{ width: 32, height: 32, ...ringStyle }} />
                             ) : (
-                              <span className="shell-avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{(name || "?")[0]?.toUpperCase()}</span>
+                              <span className="shell-avatar" style={{ width: 32, height: 32, fontSize: 13, ...ringStyle }}>{(name || "?")[0]?.toUpperCase()}</span>
                             )}
                             <span className={"shell-presence-dot" + (online ? " online" : "")} />
                           </span>
-                          <span style={{ fontSize: 12.5, color: online ? "var(--s-text)" : "var(--s-text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                            {name}
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ fontSize: 13.5, color: online ? "var(--s-text)" : "var(--s-text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+                              {name}
+                            </span>
+                            {fm && (
+                              <span style={{ fontSize: 10.5, color: fm.color }}>{fm.label}</span>
+                            )}
                           </span>
                           {uid !== user?.uid && (
                             <button

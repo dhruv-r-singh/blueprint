@@ -25,12 +25,36 @@ export default function VideoPlayer({ src, style }) {
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [hover, setHover] = useState(false);
+  const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   function togglePlay() {
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) v.play();
     else v.pause();
+  }
+
+  // MediaRecorder-produced webm (voice/video recorded in-browser, then
+  // uploaded) commonly reports duration: Infinity until the browser has
+  // actually scanned the file — Firebase Storage's streamed responses
+  // don't help it figure that out on their own. The standard workaround:
+  // seek to a huge time once metadata loads, which forces the browser to
+  // resolve the real duration, then seek back to the start.
+  function handleLoadedMetadata(e) {
+    const v = e.currentTarget;
+    setLoading(false);
+    if (v.duration === Infinity || Number.isNaN(v.duration)) {
+      const onTimeUpdate = () => {
+        v.currentTime = 0;
+        v.removeEventListener("timeupdate", onTimeUpdate);
+        setDuration(v.duration === Infinity ? 0 : v.duration);
+      };
+      v.addEventListener("timeupdate", onTimeUpdate);
+      v.currentTime = 1e9;
+    } else {
+      setDuration(v.duration);
+    }
   }
 
   function seek(e) {
@@ -83,17 +107,35 @@ export default function VideoPlayer({ src, style }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
-      <video
-        ref={videoRef}
-        src={src}
-        style={{ width: "100%", maxHeight: 260, display: "block", cursor: "pointer" }}
-        onClick={togglePlay}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-        onEnded={() => setPlaying(false)}
-      />
+      {error ? (
+        <div style={{ width: "100%", minHeight: 140, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--s-text-3)", fontSize: 12.5, padding: 16, textAlign: "center" }}>
+          Couldn&rsquo;t load this video. It may still be uploading, or the link has expired.
+        </div>
+      ) : (
+        <video
+          ref={videoRef}
+          src={src}
+          preload="metadata"
+          playsInline
+          style={{ width: "100%", maxHeight: 260, display: "block", cursor: "pointer" }}
+          onClick={togglePlay}
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
+          onLoadedMetadata={handleLoadedMetadata}
+          onEnded={() => setPlaying(false)}
+          onError={() => {
+            setError(true);
+            setLoading(false);
+          }}
+        />
+      )}
+      {loading && !error && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--s-text-3)", fontSize: 11.5, pointerEvents: "none" }}>
+          Loading…
+        </div>
+      )}
+      {!error && (
       <div className="shell-video-controls" style={{ opacity: hover || !playing ? 1 : 0 }}>
         <button type="button" className="shell-video-btn" onClick={togglePlay} aria-label={playing ? "Pause" : "Play"}>
           {playing ? <IconPause size={14} /> : <IconPlay size={14} />}
@@ -129,6 +171,7 @@ export default function VideoPlayer({ src, style }) {
           <IconExpand size={13} />
         </button>
       </div>
+      )}
     </div>
   );
 }

@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { adminAuth } from "../../../../../lib/firebaseAdmin";
+import { adminAuth, adminDb } from "../../../../../lib/firebaseAdmin";
 
 // See ../start/route.js for why this hand-rolled flow exists instead of
 // Firebase's built-in OIDC provider. This is the callback LinkedIn redirects
-// back to after the user approves (or denies) access.
+// back to after the user approves (or denies) access — shared by both the
+// sign-in flow (../start/route.js) and the "Connect LinkedIn" flow in
+// Preferences (../link-start/route.js), distinguished by whether the
+// li_link_uid cookie is present.
 export async function GET(request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
@@ -14,8 +17,10 @@ export async function GET(request) {
   const jar = await cookies();
   const expectedState = jar.get("li_state")?.value;
   const returnPath = jar.get("li_return")?.value || "/signin";
+  const linkUid = jar.get("li_link_uid")?.value || null;
   jar.delete("li_state");
   jar.delete("li_return");
+  jar.delete("li_link_uid");
 
   function fail(message) {
     const dest = new URL(returnPath, url.origin);
@@ -59,6 +64,26 @@ export async function GET(request) {
       throw new Error("LinkedIn profile fetch failed.");
     }
     const profile = await profileRes.json();
+
+    // "Connect LinkedIn" from Preferences (li_link_uid set) — attach this
+    // LinkedIn profile to the already-signed-in account's own uid instead of
+    // creating/signing into a separate linkedin:{sub} identity. See
+    // ../link-start/route.js for why this is a Firestore-only "connection"
+    // rather than a real Firebase Auth provider link.
+    if (linkUid) {
+      await adminDb.doc(`profiles/${linkUid}/private/integrations`).set(
+        {
+          linkedinConnected: true,
+          linkedinSub: profile.sub,
+          linkedinName: profile.name || "",
+          linkedinEmail: profile.email || "",
+        },
+        { merge: true }
+      );
+      const dest = new URL(returnPath, url.origin);
+      dest.searchParams.set("linkedinLinked", "1");
+      return NextResponse.redirect(dest);
+    }
 
     // Namespaced uid (same scheme as Firebase's own LinkedIn sample) so it
     // can never collide with a Google/GitHub uid for the same person.

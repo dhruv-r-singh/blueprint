@@ -216,18 +216,37 @@ export function IconLinkedinMark({ size = 15 }) {
 }
 
 export function IconDriveMark({ size = 15 }) {
-  // A clean rounded-triangle recreation of the current Google Drive mark —
-  // built from scratch as a single-tone silhouette (rounded corners, small
-  // notch cut where the three facets meet at the apex) so it sits quietly
-  // among this sidebar's other monotone icons, matching IconGithubMark's
-  // fill="currentColor" convention rather than the multi-opacity layering
-  // the previous version used.
+  // The actual current Google Drive mark, in its real brand colors — a
+  // rounded triangle split into three wedges (green/blue/yellow) meeting
+  // at the center, matching Google's current icon standards. Unlike the
+  // rest of this file's monotone currentColor icons, Drive's mark is
+  // always shown in full color in the wild (file pickers, browser tabs,
+  // etc.), so this one is the intentional exception.
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
-      <path
-        fillRule="evenodd"
-        d="M11.25 4.41 Q12 3 12.75 4.41 L20.25 18.59 Q21 20 19.4 20 L4.6 20 Q3 20 3.75 18.59 Z M11.3 5.1 L12.7 5.1 L12 6.6 Z"
-      />
+    <svg width={size} height={size} viewBox="0 0 100 100">
+      <defs>
+        <clipPath id="driveRoundedTri">
+          <path d="M13.36,79.26 L44.64,16.74 Q50,6 55.36,16.74 L86.64,79.26 Q92,90 80,90 L20,90 Q8,90 13.36,79.26 Z" />
+        </clipPath>
+        <linearGradient id="driveGreen" x1="29" y1="6" x2="71" y2="48" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#4CC98A" />
+          <stop offset="1" stopColor="#1E9E5A" />
+        </linearGradient>
+        <linearGradient id="driveBlue" x1="29" y1="48" x2="50" y2="90" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#5B9CF7" />
+          <stop offset="1" stopColor="#2F6FE0" />
+        </linearGradient>
+        <linearGradient id="driveYellow" x1="50" y1="48" x2="92" y2="90" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#FFD24C" />
+          <stop offset="1" stopColor="#F2A600" />
+        </linearGradient>
+      </defs>
+      <g clipPath="url(#driveRoundedTri)">
+        <polygon points="50,6 71,48 50,62 29,48" fill="url(#driveGreen)" />
+        <polygon points="29,48 50,62 50,90 8,90" fill="url(#driveBlue)" />
+        <polygon points="50,90 50,62 71,48 92,90" fill="url(#driveYellow)" />
+      </g>
+      <circle cx="50" cy="62" r="3.2" fill="#fff" fillOpacity="0.55" />
     </svg>
   );
 }

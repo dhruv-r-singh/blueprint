@@ -83,6 +83,9 @@ export default function TopNav({ user, extraLink }) {
       document.body.classList.toggle("reduce-motion", Boolean(prefs.reduceMotion));
       document.body.classList.toggle("compact-mode", Boolean(prefs.compactMode));
       document.body.classList.toggle("light-mode", prefs.theme === "light");
+      document.body.classList.toggle("sharp-corners", prefs.cornerStyle === "sharp");
+      document.body.classList.toggle("sidebar-right", prefs.sidebarSide === "right");
+      document.body.classList.toggle("always-show-msg-times", Boolean(prefs.alwaysShowTimestamps));
       // "zoom" isn't standard CSS, but works in Chromium/Electron (this
       // app's primary desktop target) and just no-ops elsewhere — a real
       // rem-based rescale would need every fixed px font-size in the app
@@ -109,8 +112,65 @@ export default function TopNav({ user, extraLink }) {
     });
     return () => {
       unsub();
-      document.body.classList.remove("reduce-motion", "compact-mode", "light-mode");
+      document.body.classList.remove("reduce-motion", "compact-mode", "light-mode", "sharp-corners", "sidebar-right", "always-show-msg-times");
       document.body.style.zoom = "";
+    };
+  }, [user?.uid]);
+
+  // Auto-away (Preferences → Notifications → Presence): switches focusMode
+  // to "away" after N idle minutes, and back to "available" the moment
+  // there's activity again — but only ever touches focusMode if IT was the
+  // one that set "away"; manually picking Focusing/In a meeting/Away
+  // yourself is never overridden or auto-reverted by this. TopNav mounts on
+  // every signed-in page, so this is the one place that can track "activity
+  // anywhere in the app" without every page wiring its own listeners.
+  useEffect(() => {
+    if (!user?.uid) return;
+    let idleTimer = null;
+    let autoAwaySetByUs = false;
+    let minutes = 0;
+
+    function armTimer() {
+      if (idleTimer) clearTimeout(idleTimer);
+      if (!minutes) return;
+      idleTimer = setTimeout(async () => {
+        try {
+          const { setDoc, doc: fdoc, getDoc } = await import("firebase/firestore");
+          const ref = fdoc(db, "profiles", user.uid);
+          const snap = await getDoc(ref);
+          const current = snap.data()?.focusMode || "available";
+          if (current === "available") {
+            await setDoc(ref, { focusMode: "away" }, { merge: true });
+            autoAwaySetByUs = true;
+          }
+        } catch (err) {
+          console.error("Couldn't set auto-away:", err);
+        }
+      }, minutes * 60 * 1000);
+    }
+
+    function onActivity() {
+      if (autoAwaySetByUs) {
+        autoAwaySetByUs = false;
+        import("firebase/firestore").then(({ setDoc, doc: fdoc }) =>
+          setDoc(fdoc(db, "profiles", user.uid), { focusMode: "available" }, { merge: true }).catch(() => {})
+        );
+      }
+      armTimer();
+    }
+
+    const unsubPrefs = onSnapshot(doc(db, "profiles", user.uid), (snap) => {
+      minutes = Number(snap.data()?.preferences?.autoAwayMinutes) || 0;
+      armTimer();
+    });
+
+    const events = ["mousemove", "keydown", "click", "scroll"];
+    events.forEach((ev) => window.addEventListener(ev, onActivity, { passive: true }));
+
+    return () => {
+      unsubPrefs();
+      if (idleTimer) clearTimeout(idleTimer);
+      events.forEach((ev) => window.removeEventListener(ev, onActivity));
     };
   }, [user?.uid]);
 
