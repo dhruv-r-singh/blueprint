@@ -7,6 +7,7 @@ import { collection, query, where, getDocs, doc, updateDoc, setDoc, arrayUnion }
 import { auth, db, googleProvider, githubProvider } from "../../../lib/firebase";
 import { describeAuthError } from "../../../lib/authErrors";
 import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePublicIdentity } from "../../../lib/integrations";
+import { isDesktopApp, startDesktopSignIn } from "../../../lib/desktopAuth";
 import MfaChallenge from "../../components/MfaChallenge";
 
 export default function JoinPage() {
@@ -69,6 +70,13 @@ export default function JoinPage() {
   async function handleSignIn(kind) {
     setError("");
     setPending(kind);
+    // See app/signin/page.js / lib/desktopAuth.js — inside the desktop
+    // shell, Google/GitHub sign-in happens in the real browser, not an
+    // embedded popup, and lands back on this same page via desktop-auth.
+    if ((kind === "google" || kind === "github") && isDesktopApp()) {
+      startDesktopSignIn(kind, `/join/${code}`);
+      return;
+    }
     try {
       const provider = kind === "google" ? googleProvider : githubProvider;
       const result = await signInWithPopup(auth, provider);

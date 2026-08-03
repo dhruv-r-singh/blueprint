@@ -18,6 +18,7 @@ import { doc, onSnapshot, setDoc, deleteDoc, updateDoc, collection, query, where
 import { auth, db, googleProvider, githubProvider, linkedinProvider } from "../../lib/firebase";
 import { describeAuthError } from "../../lib/authErrors";
 import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePublicIdentity } from "../../lib/integrations";
+import { isDesktopApp, startDesktopLink } from "../../lib/desktopAuth";
 import { useAuthGate } from "../../lib/useAuthGate";
 import { qrCodeUrl } from "../../lib/inviteCode";
 import { IconPhone, IconLock } from "../components/icons";
@@ -220,6 +221,19 @@ export default function AccountSettingsPage() {
     setError("");
     setNotice("");
     setBusy(entry.id);
+    // Inside the desktop shell, Google/GitHub connect/refresh happens in the
+    // real browser, not an embedded popup — see lib/desktopAuth.js for why
+    // (the old embedded-popup approach got the app flagged as malware).
+    if ((entry.id === "google.com" || entry.id === "github.com") && isDesktopApp()) {
+      try {
+        const idToken = await auth.currentUser.getIdToken();
+        await startDesktopLink(entry.id === "google.com" ? "google" : "github", idToken);
+      } catch (err) {
+        setError(err.message || `Couldn't connect ${entry.label}.`);
+        setBusy(null);
+      }
+      return;
+    }
     try {
       const result = refresh
         ? await reauthenticateWithPopup(auth.currentUser, entry.provider)
@@ -316,6 +330,19 @@ export default function AccountSettingsPage() {
     window.history.replaceState(null, "", window.location.pathname);
     if (linkedinError) setError(linkedinError);
     else setNotice("LinkedIn connected.");
+  }, []);
+
+  // Landing back here from a desktop-shell Google/GitHub connect (see
+  // grantOrRefresh above and app/desktop-auth/page.js, which forwards
+  // ?linked=google|github or ?error=... on to whatever page started it).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const linked = params.get("linked");
+    const desktopError = params.get("error");
+    if (!linked && !desktopError) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    if (desktopError) setError(desktopError);
+    else setNotice(`${linked === "google" ? "Google" : "GitHub"} connected.`);
   }, []);
 
   function resetMfaFlow() {

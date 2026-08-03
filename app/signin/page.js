@@ -16,6 +16,7 @@ import { doc, setDoc } from "firebase/firestore";
 import { auth, db, googleProvider, githubProvider, firebaseConfigured } from "../../lib/firebase";
 import { describeAuthError } from "../../lib/authErrors";
 import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePublicIdentity } from "../../lib/integrations";
+import { isDesktopApp, startDesktopSignIn } from "../../lib/desktopAuth";
 import MfaChallenge from "../components/MfaChallenge";
 
 export default function SignInPage() {
@@ -57,6 +58,14 @@ export default function SignInPage() {
     if (!firebaseConfigured) return;
     setError("");
     setPending(kind);
+    // Inside the desktop shell, Google/GitHub sign-in happens in the user's
+    // real browser instead of an embedded popup — see lib/desktopAuth.js for
+    // why (the old embedded-popup approach got the app flagged as malware).
+    // app/desktop-auth/page.js picks the flow back up once it completes.
+    if ((kind === "google" || kind === "github") && isDesktopApp()) {
+      startDesktopSignIn(kind);
+      return;
+    }
     try {
       const provider = kind === "google" ? googleProvider : githubProvider;
       const result = await signInWithPopup(auth, provider);

@@ -635,12 +635,109 @@ workflow**. That builds on all three platforms and lets you download the
 raw artifacts from the run's summary page, but doesn't publish a release
 (only tag pushes do that).
 
+**Update, after the first real run:** the `v1.0.0` release only got 2 of 3
+installers — the Linux (`ubuntu-latest`) build failed and, because the
+matrix's default `fail-fast` behavior cancels sibling jobs, took the
+in-progress macOS/Windows jobs down with it before they could finish
+cleanly (they'd actually already produced usable files by then, which is
+why 2 assets still made it onto the release). Root cause: GitHub's
+`ubuntu-latest` runner is now Ubuntu 24.04, which dropped `libfuse2` from
+the base image — `electron-builder`'s AppImage step needs it to run
+`appimagetool`, so only the Linux leg broke. Fixed in the workflow (install
+`libfuse2` before building, and `fail-fast: false` so one platform failing
+never cancels the others again) — re-save `build-desktop.yml` with the
+updated version, then push a new tag (e.g. `v1.0.1`) to get a clean
+three-installer release.
+
 One limitation worth knowing: none of the three installers are code-signed
 (that needs a paid Apple Developer account for macOS and a certificate for
-Windows), so macOS will show an "unidentified developer" warning
-(right-click → Open bypasses it) and Windows SmartScreen may warn too (More
-info → Run anyway). Cosmetic, not a functional problem — fine for a
-hackathon demo.
+Windows), so macOS will show an "unidentified developer" warning and
+Windows SmartScreen may warn too (More info → Run anyway). On recent macOS
+versions there's no simple right-click-to-bypass anymore for a fully
+unsigned app — go to **System Settings → Privacy & Security**, scroll down
+to the blocked-app notice, and click **Open Anyway**, or run
+`xattr -cr /Applications/Blueprint.app` in Terminal. This is cosmetic, not
+a sign of anything actually wrong — see the next section for a *different*,
+more serious warning macOS may show ("contains malware") that this doesn't
+cover.
+
+## Desktop app: Google/GitHub sign-in no longer uses an embedded popup
+
+**What broke:** the desktop app's Google/GitHub sign-in used to load
+Google's/GitHub's real login page inside an Electron popup with a spoofed
+Chrome user-agent (the "standard" workaround for Google's
+`disallowed_useragent` block). On macOS, that got the whole app deleted the
+moment someone tried it — "'Blueprint' was not opened because it contains
+malware" — because a fake-browser window loading a real Google/GitHub login
+screen is exactly the shape of a credential-phishing attack. Apple's
+on-device malware scanner (XProtect) very likely has a signature for
+precisely that pattern, unsigned-app or not.
+
+**The fix:** Google/GitHub sign-in (and "Connect"/"Refresh" from
+Preferences) now happens in the user's real, already-installed browser —
+never inside an Electron window — using the same pattern Slack, Discord,
+and VS Code use for desktop OAuth:
+
+1. The desktop shell asks the OS to open a sign-in URL in the real browser
+   (`electron/preload.js`'s `openExternal`, allowlisted to Google/GitHub's
+   OAuth domains only).
+2. That completes a normal server-side OAuth code exchange —
+   `app/api/auth/google/desktop-start` + `desktop-callback`, and the same
+   pair for `github` — which mints a Firebase custom token (matched to the
+   *same* uid as web sign-in, via `getUserByProviderUid`, so switching
+   between web and desktop never creates a duplicate account).
+3. The callback redirects the real browser to a `blueprint://auth-callback`
+   link. The OS routes that straight back into the already-running desktop
+   app (`electron/main.js`'s `open-url`/second-instance handling), which
+   loads `app/desktop-auth` with the token in the URL to finish signing in.
+
+No UA spoofing, no embedded OAuth pages, anywhere. `lib/desktopAuth.js` has
+the full writeup; `app/signin/page.js`, `app/join/[code]/page.js`, and
+`app/account/page.js` all branch to this flow only when
+`window.blueprintDesktop?.isDesktop` is true (i.e. only inside the desktop
+shell) — the web app is completely unchanged.
+
+**Three setup steps for this to actually work once you rebuild:**
+
+1. **Google:** add one redirect URI to the *existing* second OAuth Client ID
+   (from "Drive/Calendar tokens now refresh themselves" above — same
+   `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`, no new
+   credentials needed). In Google Cloud Console → that Client ID →
+   **Authorized redirect URIs → Add URI** →
+   `https://<your-domain>/api/auth/google/desktop-callback`.
+2. **GitHub needs a brand new OAuth App.** GitHub OAuth Apps (classic) only
+   support *one* callback URL each, and the existing one is already locked
+   to Firebase's own handler (`.../__/auth/handler`) for the web sign-in
+   popup — it can't also point here. Go to
+   [github.com/settings/developers](https://github.com/settings/developers)
+   → **New OAuth App** → Authorization callback URL
+   `https://<your-domain>/api/auth/github/desktop-callback` → create it →
+   copy the Client ID, generate a Client secret, copy that too. In Vercel →
+   Environment Variables, add `GITHUB_DESKTOP_CLIENT_ID` and
+   `GITHUB_DESKTOP_CLIENT_SECRET`, then redeploy.
+3. **Rebuild the desktop app.** `electron/package.json` now registers the
+   `blueprint://` protocol scheme (needed for step 3 of the flow above) —
+   this only takes effect in a freshly built installer, not the ones
+   already published. Push a new tag (see "Desktop app download button"
+   above) once the two steps above are done.
+
+**One known cosmetic gap:** signing in (or connecting Google/GitHub) via
+this desktop flow doesn't add a `google.com`/`github.com` entry to Firebase
+Auth's own `providerData` — the Admin SDK can create the *same* underlying
+account, but can't fabricate a real linked-provider record the way an
+actual popup sign-in does. Practically: the Account page's "Connected"
+badge next to Google/GitHub may not light up for someone who only ever
+used the desktop app, even though Drive/Calendar/repo access is genuinely
+working (same as LinkedIn's badge already works differently — see
+`isLinkedinConnected()` above). Cosmetic only; doesn't affect anything
+functional. Signing into the *web* app with the same Google/GitHub account
+at least once will make the badge line up.
+
+Also worth knowing: `getUserByProviderUid` needs a reasonably recent
+`firebase-admin` (v11.5+). If it's missing/older, these routes just fall
+back to matching by email instead of failing outright — you'd only notice
+if someone signs in via desktop and web with a Google/GitHub account whose
+email isn't verified/available, which is an edge case, not a hard blocker.
 
 ## Message requests + mailbox
 

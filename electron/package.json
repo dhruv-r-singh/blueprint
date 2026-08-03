@@ -2,6 +2,8 @@
   "name": "blueprint-desktop",
   "version": "0.1.0",
   "private": true,
+  "description": "Blueprint desktop app",
+  "author": { "name": "Dhruv Raj Singh", "email": "dhruvrajsingh.2028@gmail.com" },
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -14,10 +16,11 @@
   "build": {
     "appId": "com.blueprint.app",
     "productName": "Blueprint",
-    "files": ["main.js"],
+    "files": ["main.js", "preload.js"],
     "directories": { "output": "dist" },
-    "mac": { "target": "dmg", "artifactName": "Blueprint-mac.${ext}" },
-    "win": { "target": "nsis", "artifactName": "Blueprint-win.${ext}" },
+    "protocols": [{ "name": "Blueprint OAuth handoff", "schemes": ["blueprint"] }],
+    "mac": { "target": "dmg", "artifactName": "Blueprint-mac.${ext}", "icon": "icon.icns" },
+    "win": { "target": "nsis", "artifactName": "Blueprint-win.${ext}", "icon": "icon.ico" },
     "linux": { "target": "AppImage", "artifactName": "Blueprint-linux.${ext}" },
     "nsis": { "artifactName": "Blueprint-win.${ext}" }
   }
