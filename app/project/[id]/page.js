@@ -36,6 +36,7 @@ import {
   uploadFileToDrive,
 } from "../../../lib/integrations";
 import { uploadFile, safeFileName, compressImage } from "../../../lib/storage";
+import { aiComplete, aiCompleteJSON } from "../../../lib/ai";
 import Autocomplete from "../../components/Autocomplete";
 import TopNav from "../../components/TopNav";
 import CADViewer, { guessCadKind } from "../../components/CADViewer";
@@ -69,23 +70,45 @@ function roleColor(code) {
   return ROLE_COLORS[prefix] || "#e0a339";
 }
 
-const SEED_CANDIDATES = [
-  { name: "Priya N.", headline: "ML engineer · on-device vision", roleCodes: ["AI"], skillTags: ["PyTorch", "Computer vision", "Mobile ML"], match: 94 },
-  { name: "Jordan L.", headline: "Mobile engineer · React Native", roleCodes: ["SW"], skillTags: ["React Native", "iOS", "Android"], match: 88 },
-  { name: "Sam O.", headline: "Product designer · rapid prototyping", roleCodes: ["CAD", "HW"], skillTags: ["Fusion 360", "Injection molding"], match: 91 },
-  { name: "Elena V.", headline: "Business · agtech outreach", roleCodes: ["BIZ"], skillTags: ["Partnerships", "Grant writing"], match: 85 },
-  { name: "Maya R.", headline: "Mechanical engineering student", roleCodes: ["CAD"], skillTags: ["SolidWorks", "3D printing"], match: 76 },
-  { name: "Noah P.", headline: "Full-stack engineer · Next.js & Firebase", roleCodes: ["SW"], skillTags: ["Next.js", "Firebase", "TypeScript"], match: 97 },
-  { name: "Aisha K.", headline: "Embedded systems · robotics firmware", roleCodes: ["HW"], skillTags: ["C++", "STM32", "PCB design"], match: 82 },
-  { name: "Leo T.", headline: "Data scientist · NLP & LLM tooling", roleCodes: ["AI"], skillTags: ["Python", "LangChain", "NLP"], match: 89 },
-  { name: "Grace M.", headline: "UX researcher · usability testing", roleCodes: ["UX"], skillTags: ["Figma", "User interviews", "Prototyping"], match: 79 },
-  { name: "Devon R.", headline: "Growth marketer · early-stage startups", roleCodes: ["BIZ"], skillTags: ["Growth marketing", "Analytics", "Copywriting"], match: 71 },
-  { name: "Harper S.", headline: "Mechanical engineer · CAD & FEA", roleCodes: ["CAD"], skillTags: ["SolidWorks", "FEA", "GD&T"], match: 93 },
-  { name: "Tyler B.", headline: "Backend engineer · distributed systems", roleCodes: ["SW"], skillTags: ["Go", "Kubernetes", "PostgreSQL"], match: 68 },
-  { name: "Nina C.", headline: "Product designer · brand & UI systems", roleCodes: ["UX"], skillTags: ["Figma", "Design systems", "Illustration"], match: 87 },
-  { name: "Omar F.", headline: "Hardware engineer · power electronics", roleCodes: ["HW", "CAD"], skillTags: ["Altium", "Power systems", "Prototyping"], match: 63 },
-  { name: "Zoe W.", headline: "Biz dev · partnerships & fundraising", roleCodes: ["BIZ"], skillTags: ["Fundraising", "Pitch decks", "Sales"], match: 96 },
-];
+// Rough keyword expansion for each short role code, so a role like
+// "SW-101 Frontend Engineer" can be matched against a real profile's
+// skills/headline even though nobody's typing "SW" into their own skill
+// list. Not an exact taxonomy — just enough signal to rank real people
+// instead of requiring a fake, hand-curated candidate pool.
+const ROLE_KEYWORDS = {
+  SW: ["software", "engineer", "engineering", "developer", "frontend", "front-end", "backend", "back-end", "full-stack", "fullstack", "web", "app", "mobile", "programming", "code", "javascript", "python"],
+  AI: ["ai", "ml", "machine learning", "data", "model", "nlp", "vision", "pytorch", "tensorflow"],
+  CAD: ["cad", "mechanical", "design", "prototyping", "hardware", "3d", "solidworks", "fusion"],
+  HW: ["hardware", "electrical", "embedded", "firmware", "circuit", "pcb", "arduino"],
+  BIZ: ["business", "finance", "financial", "marketing", "sales", "operations", "growth", "partnerships", "fundraising", "accounting", "legal"],
+  UX: ["design", "ux", "ui", "product", "user", "research", "figma"],
+};
+
+/** Rough 0+ match score for how well a real profile fits an open role, from overlapping skills/headline keywords — not exact NLP, just enough to rank real people instead of needing a hand-curated fake candidate pool. */
+function matchScoreForRole(role, profile) {
+  const roleText = `${role.code || ""} ${role.title || ""}`.toLowerCase();
+  const roleWords = new Set(roleText.split(/[\s/,-]+/).filter(Boolean));
+  const prefix = (role.code || "").replace(/[0-9-]/g, "").toUpperCase();
+  for (const w of ROLE_KEYWORDS[prefix] || []) roleWords.add(w);
+
+  const skills = (profile.skills || []).map((s) => s.toLowerCase());
+  const headline = (profile.headline || "").toLowerCase();
+
+  let score = 0;
+  for (const skill of skills) {
+    if (roleText.includes(skill)) score += 2;
+    else if ([...roleWords].some((w) => w.length > 2 && (skill.includes(w) || w.includes(skill)))) score += 2;
+  }
+  for (const w of roleWords) {
+    if (w.length > 2 && headline.includes(w)) score += 1;
+  }
+  return score;
+}
+
+/** Turns a raw keyword-overlap score into a display percentage, roughly matching the range the old hand-picked match scores used. */
+function matchScoreToPercent(score) {
+  return Math.min(98, 52 + score * 9);
+}
 
 const CHANNELS = [
   { key: "overview", label: "Overview", desc: "Brief, roles, and status for this project", Icon: IconLayout },
@@ -146,7 +169,7 @@ export default function ProjectPage() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [draggedId, setDraggedId] = useState(null);
-  const [candidates, setCandidates] = useState([]);
+  const [allProfiles, setAllProfiles] = useState([]);
   const [messages, setMessages] = useState([]);
   const [msgText, setMsgText] = useState("");
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
@@ -161,6 +184,13 @@ export default function ProjectPage() {
   const [taskRefId, setTaskRefId] = useState("");
   const [newRoleCode, setNewRoleCode] = useState("");
   const [newRoleTitle, setNewRoleTitle] = useState("");
+  const [aiRolesLoading, setAiRolesLoading] = useState(false);
+  const [aiSuggestedRoles, setAiSuggestedRoles] = useState([]);
+  const [aiRolesError, setAiRolesError] = useState("");
+  const [aiSummaryOpen, setAiSummaryOpen] = useState(false);
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+  const [aiSummaryText, setAiSummaryText] = useState("");
+  const [aiSummaryError, setAiSummaryError] = useState("");
   const [meetingStartSignal, setMeetingStartSignal] = useState(0);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
@@ -334,24 +364,28 @@ export default function ProjectPage() {
     return () => unsub();
   }, [id]);
 
+  // Matches now ranks real signed-up people instead of seeded fake
+  // candidates — everyone's public profile doc (profiles/{uid}), minus
+  // whoever's already on this project. A one-time fetch rather than a live
+  // listener: this list only needs to be reasonably fresh when Matches is
+  // opened, and Firestore doesn't support "not in this array" as a live
+  // query filter anyway, so the membership exclusion happens client-side.
   useEffect(() => {
     if (tab !== "matches" || !user) return;
     (async () => {
-      // Backfills any SEED_CANDIDATES entries that aren't in Firestore yet
-      // (matched by name), instead of the old "only seed if the whole
-      // collection is empty" check — so adding new seed candidates later
-      // (like this round's 10) fills them in automatically on the next
-      // visit to Matches, without needing the existing ones wiped first.
-      const snap = await getDocs(collection(db, "candidates"));
-      const existingNames = new Set(snap.docs.map((d) => d.data().name));
-      const missing = SEED_CANDIDATES.filter((c) => !existingNames.has(c.name));
-      for (const c of missing) await addDoc(collection(db, "candidates"), c);
+      try {
+        const snap = await getDocs(collection(db, "profiles"));
+        const memberSet = new Set(project?.memberIds || []);
+        setAllProfiles(
+          snap.docs
+            .filter((d) => !memberSet.has(d.id))
+            .map((d) => ({ uid: d.id, ...d.data() }))
+        );
+      } catch (err) {
+        console.error("Couldn't load profiles for matching:", err);
+      }
     })();
-    const unsub = onSnapshot(collection(db, "candidates"), (snap) => {
-      setCandidates(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
-    return () => unsub();
-  }, [tab, user]);
+  }, [tab, user, project?.memberIds]);
 
   useEffect(() => {
     if ((tab !== "chat" && tab !== "files") || !id) return;
@@ -1165,6 +1199,69 @@ export default function ProjectPage() {
     }
   }
 
+  /** AI role maker — asks the free AI for a short list of roles that make sense given the project's title/description, so the user isn't starting the "Roles needed" list from a blank input. Suggestions are shown as add-one-click chips, never written to Firestore automatically. */
+  async function suggestRolesWithAI() {
+    setAiRolesLoading(true);
+    setAiRolesError("");
+    setAiSuggestedRoles([]);
+    try {
+      const existing = (project.roles || []).map((r) => `${r.code}: ${r.title}`).join(", ") || "none yet";
+      const data = await aiCompleteJSON(
+        `Project title: "${project.title || "Untitled project"}"\nProject description: "${project.description || "No description given."}"\nRoles already on the team: ${existing}\n\nSuggest 4-6 NEW roles (not already listed) this project team likely needs to fill. For each, give a short uppercase code (2-4 letters, like SW, AI, UX, HW, BIZ), a role title, and a one-sentence description of what that role would do on this specific project.`,
+        {
+          system:
+            'You are helping a hackathon/project team figure out what roles to recruit for. Return a JSON array like [{"code":"SW","title":"Software Engineer","description":"..."}].',
+        }
+      );
+      const cleaned = (Array.isArray(data) ? data : [])
+        .filter((r) => r && r.code && r.title)
+        .map((r) => ({ code: String(r.code).toUpperCase().slice(0, 6), title: String(r.title), description: String(r.description || "") }));
+      if (cleaned.length === 0) throw new Error("AI didn't return any usable suggestions — try again.");
+      setAiSuggestedRoles(cleaned);
+    } catch (err) {
+      console.error("AI role suggestion failed:", err);
+      setAiRolesError(err.message || "Couldn't get AI suggestions right now.");
+    } finally {
+      setAiRolesLoading(false);
+    }
+  }
+
+  async function addSuggestedRole(role) {
+    try {
+      await updateDoc(doc(db, "projects", id), { roles: arrayUnion(role) });
+      setAiSuggestedRoles((prev) => prev.filter((r) => r !== role));
+    } catch (err) {
+      console.error("Failed to add suggested role:", err);
+    }
+  }
+
+  /** AI chat summary — summarizes the most recent messages in this channel so someone catching up doesn't have to scroll. Only ever runs on demand (button click), nothing is auto-summarized or stored. */
+  async function summarizeChat() {
+    setAiSummaryOpen(true);
+    setAiSummaryLoading(true);
+    setAiSummaryError("");
+    try {
+      const recent = messages.slice(-40);
+      if (recent.length === 0) throw new Error("No messages yet to summarize.");
+      const transcript = recent
+        .map((m) => {
+          const body = m.type === "voice" ? "[voice message]" : m.type === "attachment" ? `[shared file: ${m.title || m.url || "attachment"}]` : m.text || "";
+          return body ? `${m.senderName || "Someone"}: ${body}` : null;
+        })
+        .filter(Boolean)
+        .join("\n");
+      const summary = await aiComplete(`Summarize this team chat transcript in 3-5 short bullet points, focused on decisions made, action items, and open questions:\n\n${transcript}`, {
+        system: "You are summarizing a team's project chat for someone catching up. Be concise and specific. Use plain dashes for bullets, no markdown headers.",
+      });
+      setAiSummaryText(summary);
+    } catch (err) {
+      console.error("AI chat summary failed:", err);
+      setAiSummaryError(err.message || "Couldn't summarize the chat right now.");
+    } finally {
+      setAiSummaryLoading(false);
+    }
+  }
+
   async function saveProjectMeta(e) {
     e.preventDefault();
     if (!settingsName.trim()) return;
@@ -1561,9 +1658,57 @@ export default function ProjectPage() {
                     </div>
                   )}
 
-                  <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
-                    Roles needed
-                  </p>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", margin: 0 }}>
+                      Roles needed
+                    </p>
+                    <button
+                      type="button"
+                      className="shell-btn-outline"
+                      style={{ fontSize: 11, height: 26, padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 5 }}
+                      onClick={suggestRolesWithAI}
+                      disabled={aiRolesLoading}
+                    >
+                      <IconSparkle size={12} />
+                      {aiRolesLoading ? "Thinking…" : "Suggest roles with AI"}
+                    </button>
+                  </div>
+                  {aiRolesError && (
+                    <p style={{ fontSize: 12, color: "var(--s-red, #d86f6f)", marginBottom: 10 }}>{aiRolesError}</p>
+                  )}
+                  {aiSuggestedRoles.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+                      {aiSuggestedRoles.map((r, i) => (
+                        <div
+                          key={i}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            border: "1px dashed var(--s-border)",
+                            borderRadius: 8,
+                            padding: "8px 10px",
+                          }}
+                        >
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "var(--s-amber)", flex: "none" }}>{r.code}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 600 }}>{r.title}</div>
+                            {r.description && (
+                              <div style={{ fontSize: 11, color: "var(--s-text-3)" }}>{r.description}</div>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className="shell-btn-outline"
+                            style={{ fontSize: 11, height: 26, padding: "0 10px", flex: "none" }}
+                            onClick={() => addSuggestedRole(r)}
+                          >
+                            Add
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {(project.roles || []).length === 0 ? (
                     <p style={{ fontSize: 13, color: "var(--s-text-3)" }}>No roles added yet.</p>
                   ) : (
@@ -1634,7 +1779,7 @@ export default function ProjectPage() {
                         void presenceTick; // re-evaluate isOnline() on each tick
                         const profile = memberProfiles[uid] || {};
                         const online = isOnline(profile.lastActiveAt);
-                        const name = profile.name || (uid === user?.uid ? user?.displayName || user?.email : "Member");
+                        const name = profile.name || (uid === user?.uid ? user?.displayName || user?.email : profile.email) || "Member";
                         return (
                           <div
                             key={uid}
@@ -1798,9 +1943,11 @@ export default function ProjectPage() {
                 </p>
               )}
               {(project.roles || []).map((role) => {
-                const matched = candidates
-                  .filter((c) => (c.roleCodes || []).includes(role.code))
-                  .sort((a, b) => (b.match || 0) - (a.match || 0));
+                const matched = allProfiles
+                  .map((p) => ({ ...p, matchScore: matchScoreForRole(role, p) }))
+                  .filter((p) => p.matchScore > 0)
+                  .sort((a, b) => b.matchScore - a.matchScore)
+                  .slice(0, 8);
                 if (matched.length === 0) return null;
                 return (
                   <div key={role.code} className="shell-match-role-block">
@@ -1808,20 +1955,18 @@ export default function ProjectPage() {
                       <span className="shell-match-role-code">{role.code}-101</span>
                       <span className="shell-match-role-title">{role.title}</span>
                     </div>
-                    {matched.map((c, i) => (
-                      <div key={c.id} className={"shell-cand-card" + (i === 0 ? " top-match" : "")}>
+                    {matched.map((p, i) => (
+                      <div key={p.uid} className={"shell-cand-card" + (i === 0 ? " top-match" : "")}>
                         <div className="shell-cand-top">
                           {i === 0 && <span className="shell-top-badge">Top match</span>}
-                          <span className="shell-cand-name">{c.name}</span>
-                          {c.match && (
-                            <span style={{ marginLeft: "auto", fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: "var(--s-green)" }}>
-                              {c.match}%
-                            </span>
-                          )}
+                          <span className="shell-cand-name">{p.name || p.email || "Someone new"}</span>
+                          <span style={{ marginLeft: "auto", fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: "var(--s-green)" }}>
+                            {matchScoreToPercent(p.matchScore)}%
+                          </span>
                         </div>
-                        <div className="shell-cand-headline">{c.headline}</div>
+                        {p.headline && <div className="shell-cand-headline">{p.headline}</div>}
                         <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 8 }}>
-                          {(c.skillTags || []).map((s, si) => (
+                          {(p.skills || []).slice(0, 6).map((s, si) => (
                             <span key={si} className="shell-mini-chip">{s}</span>
                           ))}
                         </div>
@@ -1829,7 +1974,7 @@ export default function ProjectPage() {
                           type="button"
                           className="shell-btn-outline"
                           style={{ fontSize: 11.5, height: 28, padding: "0 12px" }}
-                          onClick={() => setMessageTarget({ toUid: null, toLabel: c.name })}
+                          onClick={() => setMessageTarget({ toUid: p.uid, toLabel: p.name || p.email || "them" })}
                         >
                           Message
                         </button>
@@ -1838,8 +1983,11 @@ export default function ProjectPage() {
                   </div>
                 );
               })}
-              {candidates.length === 0 && (
-                <p style={{ fontSize: 13, color: "var(--s-text-3)" }}>Loading candidates…</p>
+              {allProfiles.length === 0 && (
+                <p style={{ fontSize: 13, color: "var(--s-text-3)" }}>
+                  No other Blueprint members yet to match against — once more people sign up and add skills to their
+                  profile, they'll show up here ranked against your open roles.
+                </p>
               )}
             </div>
           )}
@@ -2156,19 +2304,62 @@ export default function ProjectPage() {
               />
               <div style={{ display: "flex", flex: 1, minHeight: 0, gap: 16 }}>
               <div className="shell-chat-panel" style={{ flex: 1, minWidth: 0 }}>
-                <div className="shell-chat-search">
-                  <IconSearch size={13} />
-                  <input
-                    value={chatSearch}
-                    onChange={(e) => setChatSearch(e.target.value)}
-                    placeholder="Search messages"
-                  />
-                  {chatSearch && (
-                    <button type="button" className="shell-chat-search-clear" onClick={() => setChatSearch("")} aria-label="Clear search">
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <div className="shell-chat-search" style={{ flex: 1 }}>
+                    <IconSearch size={13} />
+                    <input
+                      value={chatSearch}
+                      onChange={(e) => setChatSearch(e.target.value)}
+                      placeholder="Search messages"
+                    />
+                    {chatSearch && (
+                      <button type="button" className="shell-chat-search-clear" onClick={() => setChatSearch("")} aria-label="Clear search">
+                        ×
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="shell-btn-outline"
+                    style={{ fontSize: 11, height: 32, padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 5, flex: "none" }}
+                    onClick={summarizeChat}
+                    disabled={aiSummaryLoading}
+                    title="Summarize recent messages with AI"
+                  >
+                    <IconSparkle size={12} />
+                    {aiSummaryLoading ? "Summarizing…" : "Summarize"}
+                  </button>
+                </div>
+                {aiSummaryOpen && (
+                  <div
+                    style={{
+                      border: "1px solid var(--s-border)",
+                      borderRadius: 8,
+                      padding: "10px 12px",
+                      margin: "8px 0",
+                      fontSize: 12.5,
+                      lineHeight: 1.55,
+                      background: "var(--s-bg-elevated)",
+                      whiteSpace: "pre-wrap",
+                      position: "relative",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setAiSummaryOpen(false)}
+                      aria-label="Close summary"
+                      style={{ position: "absolute", top: 8, right: 10, background: "none", border: "none", color: "var(--s-text-3)", cursor: "pointer", fontSize: 14 }}
+                    >
                       ×
                     </button>
-                  )}
-                </div>
+                    <div style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 6 }}>
+                      AI summary · last {Math.min(messages.length, 40)} messages
+                    </div>
+                    {aiSummaryLoading && "Reading the conversation…"}
+                    {!aiSummaryLoading && aiSummaryError && <span style={{ color: "var(--s-red, #d86f6f)" }}>{aiSummaryError}</span>}
+                    {!aiSummaryLoading && !aiSummaryError && aiSummaryText}
+                  </div>
+                )}
                 <div className="shell-msgs">
                   {chatSearch.trim() && messages.filter((m) => messageMatchesSearch(m, chatSearch)).length === 0 && (
                     <div style={{ textAlign: "center", color: "var(--s-text-3)", fontSize: 13, padding: 20 }}>
@@ -2430,7 +2621,7 @@ export default function ProjectPage() {
                       {myIntegrations?.driveAccessToken && project?.driveFolderId && (
                         <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--s-text-2)", cursor: "pointer" }}>
                           <Toggle checked={alsoAddToDrive} onChange={setAlsoAddToDrive} />
-                          Also add to Drive
+                          Add to Drive
                         </label>
                       )}
                     </div>

@@ -10,10 +10,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
+import { useRouter, useSearchParams } from "next/navigation";
+import { onAuthStateChanged, signInWithPopup, signInWithCustomToken, signOut } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
-import { auth, db, googleProvider, githubProvider, linkedinProvider, firebaseConfigured } from "../../lib/firebase";
+import { auth, db, googleProvider, githubProvider, firebaseConfigured } from "../../lib/firebase";
 import { describeAuthError } from "../../lib/authErrors";
 import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePublicIdentity } from "../../lib/integrations";
 import MfaChallenge from "../components/MfaChallenge";

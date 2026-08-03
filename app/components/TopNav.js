@@ -57,10 +57,10 @@ export default function TopNav({ user, extraLink }) {
     if (href === pathname) e.preventDefault();
   }
 
-  /** Plain imperative nav for the dropdown menu items — bypasses next/link's own click handling entirely (no dependency on it not being intercepted/prevented by anything else on the page), closes the menu first so nothing can render on top of the click. */
+  /** Hard browser navigation for the dropdown menu items — `router.push` (Next's client-side router) was confirmed not actually changing the URL even though the click itself was registering fine, so this bypasses the client router entirely and navigates the same way typing a URL and hitting Enter would. Costs a full page reload instead of an instant client-side swap, but it cannot silently no-op the way the router apparently was. */
   function navTo(href) {
     setOpenMenu(null);
-    if (href !== pathname) router.push(href);
+    if (href !== pathname) window.location.href = href;
   }
 
   // TopNav mounts on every signed-in page, so this is the one place that
@@ -117,7 +117,7 @@ export default function TopNav({ user, extraLink }) {
   async function handleSignOut() {
     setOpenMenu(null);
     await signOut(auth);
-    router.push("/");
+    window.location.href = "/";
   }
 
   return (
