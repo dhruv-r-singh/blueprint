@@ -16,6 +16,10 @@ permissions:
 jobs:
   build:
     strategy:
+      # Don't let one platform's failure cancel the other two mid-build —
+      # without this, a Linux-only problem (see below) took macOS/Windows
+      # down with it even though they were building fine.
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
@@ -26,15 +30,25 @@ jobs:
         with:
           node-version: 20
 
+      # GitHub's ubuntu-latest runner moved to Ubuntu 24.04, which dropped
+      # libfuse2 from the base image. electron-builder's AppImage step needs
+      # it to run appimagetool — without this, only the Linux build fails.
+      - name: Install libfuse2 (needed for AppImage on Ubuntu 24.04 runners)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
+
       - name: Install dependencies
         working-directory: electron
         run: npm install
 
+      # --publish=never: this workflow's own "release" job below handles
+      # uploading assets, so electron-builder shouldn't also try to publish
+      # on its own (it can auto-detect a GitHub remote and attempt to).
       - name: Build installer
         working-directory: electron
-        run: npm run dist
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist -- --publish=never
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
