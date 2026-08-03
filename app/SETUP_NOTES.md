@@ -482,18 +482,53 @@ API instead for guaranteed uptime (needs a `GOOGLE_TRANSLATE_API_KEY` env
 var and a small change to `app/api/translate/route.js` — ask me if you
 want that swapped back in).
 
+## AI features (chat summaries, role suggestions)
+
+`app/api/ai/route.js` proxies both of those (and anything else built on
+`lib/ai.js`'s `aiComplete`/`aiCompleteJSON`) through **Google's Gemini API**.
+This used to run through Pollinations.ai's free public endpoint, which
+worked with no key at all — but Pollinations moved to a paid "Pollen"
+credit system, and the free/anonymous tier isn't enough for the model this
+app needs (shows up as a 402 error). Gemini's free tier needs a key, but
+the key itself costs nothing and needs no credit card:
+
+1. Go to **[aistudio.google.com](https://aistudio.google.com)** and sign in
+   with any Google account.
+2. Click **Get API key** (top left or under your profile) → **Create API
+   key**. Pick the same GCP project as `blueprint-drs` if it offers a
+   choice, or let it create a new one — either works, this key isn't tied
+   to Firebase.
+3. Copy the key.
+4. In **Vercel → your project → Settings → Environment Variables**, add
+   `GEMINI_API_KEY` with that value, Production environment.
+5. Redeploy.
+
+Free tier is rate-limited (roughly 10 requests/minute, a few hundred/day on
+the `gemini-2.5-flash` model this route uses) — plenty for occasional
+summaries/suggestions, but if it ever gets hit hard, `app/api/ai/route.js`
+surfaces a 429 as "Hit the free daily AI limit" rather than failing
+silently.
+
 ## Focus modes
 
 The topbar has a status/focus picker next to the avatar (`app/components/
-FocusMode.js`) — Available, Focusing, In a meeting, Away — Slack-style.
-Saved to `profiles/{uid}.focusMode`, shown next to your name in a
-project's Overview → Team panel too (skipped for "Available", the default,
-to avoid clutter — only non-default statuses show a badge). Not yet wired
-into every other place a teammate's name appears (e.g. chat messages) —
-extending it there would just mean reading the same `focusModeInfo()`
-helper (`app/components/FocusMode.js`) off `memberProfiles[uid].focusMode`.
-It's purely informational for now, like Slack's status — doesn't mute
-notifications or change behavior elsewhere while "Focusing."
+FocusMode.js`) — Available, Focusing, In a meeting, Away, plus any custom
+ones a person creates for themselves (name + any color, via the "+ Custom
+focus" row in the same dropdown — no separate page). Saved to
+`profiles/{uid}.focusMode`; for a custom one, the label/color are also
+denormalized onto `profiles/{uid}.activeFocusLabel`/`activeFocusColor` so
+teammates' browsers can render it without needing to read the owner's
+private list of custom focuses (see the comment above `focusModeInfo()` in
+`FocusMode.js` for why).
+
+It shows up in three places: the small presence dot itself (colored per
+focus mode when online, hover it for the label), team chat's Team rail, and
+Overview's Team panel. It's still purely a signal, not an app behavior
+switch — with one exception: "Auto-away" (Preferences → Notifications →
+Presence) will automatically flip your own focus to "Away" after N idle
+minutes and back to "Available" the moment you're active again, but only
+ever touches it in that one automatic way — it never overrides a status you
+picked yourself.
 
 ## Hosting at a custom domain (blueprint.dhruvrsingh.com)
 
@@ -555,6 +590,57 @@ Down to exactly two: **Raleway** for the "Blueprint" wordmark only
 (`.brand-wordmark` in `globals.css`), **DM Sans** for everything else. If you
 add new UI, use `font-family: "DM Sans", sans-serif` (or inherit — the body
 default is already DM Sans) and don't introduce a third typeface.
+
+## Desktop app download button
+
+The landing page (`app/page.js`) now has a "Download for [your OS]" button
+next to "Get started" (auto-detects Mac/Windows/Linux from the browser, plus
+small links for the other two). `electron/` already had a working desktop
+wrapper — it just loads the live site in a window, no site code is bundled
+into it — but nothing was actually building it into installer files or
+publishing them anywhere. That's what's new here: `electron/package.json`
+now pins each installer to a fixed filename (`Blueprint-mac.dmg`,
+`Blueprint-win.exe`, `Blueprint-linux.AppImage`) so the download links never
+need to change between versions, and a GitHub Actions workflow builds and
+publishes them.
+
+**This needs three things you'll have to do by hand — I don't have write
+access to your repo root (`.github/` isn't in a folder I could reach this
+session) or to Vercel/GitHub's settings:**
+
+1. **Add the workflow file.** I saved it to your outputs as
+   `build-desktop.yml` — on github.com, go to your repo → **Add file → Create
+   new file**, name it exactly `.github/workflows/build-desktop.yml` (typing
+   the slashes creates the folders), paste the contents of that file, then
+   **Commit directly to main**.
+2. **Set `NEXT_PUBLIC_GITHUB_REPO` in Vercel** → your project → **Settings →
+   Environment Variables** → add `NEXT_PUBLIC_GITHUB_REPO` = `owner/repo`
+   (e.g. `dhruvrajsingh/blueprint` — whatever your repo's actually called),
+   Production environment, then redeploy. The Download button won't render
+   at all until this is set (it has nothing to link to otherwise).
+3. **Trigger a build.** The workflow runs on any push of a tag starting with
+   `v` (e.g. `v1.0.0`), which you can do entirely from github.com — go to
+   your repo → **Releases → Draft a new release** → under "Choose a tag"
+   type a new tag like `v1.0.0` → **Publish release**. That push kicks off
+   three parallel builds (macOS/Windows/Linux) in the **Actions** tab, each
+   takes a few minutes, and once all three finish the workflow attaches the
+   three installers to that same release automatically. After that, the
+   Download button's links (`.../releases/latest/download/Blueprint-*.{ext}`)
+   resolve immediately — no further action needed for future updates beyond
+   pushing a new tag when you want to ship a new build.
+
+You can also trigger a build without releasing anything yet, to sanity-check
+it actually compiles: **Actions** tab → "Build desktop app" workflow → **Run
+workflow**. That builds on all three platforms and lets you download the
+raw artifacts from the run's summary page, but doesn't publish a release
+(only tag pushes do that).
+
+One limitation worth knowing: none of the three installers are code-signed
+(that needs a paid Apple Developer account for macOS and a certificate for
+Windows), so macOS will show an "unidentified developer" warning
+(right-click → Open bypasses it) and Windows SmartScreen may warn too (More
+info → Run anyway). Cosmetic, not a functional problem — fine for a
+hackathon demo.
 
 ## Message requests + mailbox
 

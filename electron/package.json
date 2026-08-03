@@ -15,8 +15,10 @@
     "appId": "com.blueprint.app",
     "productName": "Blueprint",
     "files": ["main.js"],
-    "mac": { "target": "dmg" },
-    "win": { "target": "nsis" },
-    "linux": { "target": "AppImage" }
+    "directories": { "output": "dist" },
+    "mac": { "target": "dmg", "artifactName": "Blueprint-mac.${ext}" },
+    "win": { "target": "nsis", "artifactName": "Blueprint-win.${ext}" },
+    "linux": { "target": "AppImage", "artifactName": "Blueprint-linux.${ext}" },
+    "nsis": { "artifactName": "Blueprint-win.${ext}" }
   }
 }

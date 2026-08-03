@@ -8,6 +8,31 @@ import { collection, query, where, getDocs, doc, getDoc } from "firebase/firesto
 import { auth, db, firebaseConfigured } from "../lib/firebase";
 import ParticlesBackground from "./components/ParticlesBackground";
 
+// Set via NEXT_PUBLIC_GITHUB_REPO (Vercel env var) — "owner/repo", e.g.
+// "dhruvrajsingh/blueprint". Used to build download links to the desktop
+// app installers, which .github/workflows/build-desktop.yml builds and
+// attaches to a GitHub Release every time a "v*" tag is pushed (see
+// SETUP_NOTES.md — pushing a tag can be done entirely from github.com, no
+// local terminal needed). electron/package.json pins each installer to a
+// stable filename (Blueprint-mac.dmg etc.), so these links never need to
+// change as new versions ship — GitHub's /releases/latest/download/<name>
+// always resolves to the newest release that has that file attached.
+const GITHUB_REPO = process.env.NEXT_PUBLIC_GITHUB_REPO || "";
+const DESKTOP_BUILDS = [
+  { platform: "mac", label: "macOS", file: "Blueprint-mac.dmg" },
+  { platform: "win", label: "Windows", file: "Blueprint-win.exe" },
+  { platform: "linux", label: "Linux", file: "Blueprint-linux.AppImage" },
+];
+
+/** Guesses the visitor's OS from the browser so the main Download button can point straight at the right installer. */
+function detectPlatform() {
+  if (typeof navigator === "undefined") return "mac";
+  const ua = navigator.userAgent || "";
+  if (/Win/i.test(ua)) return "win";
+  if (/Linux/i.test(ua) && !/Android/i.test(ua)) return "linux";
+  return "mac";
+}
+
 const FEATURES = [
   {
     title: "Find your team",
@@ -27,6 +52,11 @@ export default function Page() {
   const router = useRouter();
   const [user, setUser] = useState(undefined);
   const [error, setError] = useState("");
+  const [platform, setPlatform] = useState("mac");
+
+  useEffect(() => {
+    setPlatform(detectPlatform());
+  }, []);
 
   useEffect(() => {
     if (!firebaseConfigured) {
@@ -107,13 +137,44 @@ export default function Page() {
             {error && <p className="notice" style={{ maxWidth: 420 }}>{error}</p>}
             {!firebaseConfigured && <p className="notice" style={{ maxWidth: 420 }}>Auth isn&rsquo;t configured yet.</p>}
 
-            <Link
-              href="/signin"
-              className="shell-auth-btn primary"
-              style={{ width: "auto", margin: 0, padding: "14px 32px", textDecoration: "none" }}
-            >
-              Get started
-            </Link>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "center" }}>
+              <Link
+                href="/signin"
+                className="shell-auth-btn primary"
+                style={{ width: "auto", margin: 0, padding: "14px 32px", textDecoration: "none" }}
+              >
+                Get started
+              </Link>
+
+              {GITHUB_REPO && (
+                <a
+                  href={`https://github.com/${GITHUB_REPO}/releases/latest/download/${
+                    DESKTOP_BUILDS.find((b) => b.platform === platform).file
+                  }`}
+                  className="shell-auth-btn"
+                  style={{ width: "auto", margin: 0, padding: "14px 32px", textDecoration: "none" }}
+                >
+                  Download for {DESKTOP_BUILDS.find((b) => b.platform === platform).label}
+                </a>
+              )}
+            </div>
+
+            {GITHUB_REPO && (
+              <div style={{ marginTop: 14, fontSize: 12.5, color: "var(--s-text-2)" }}>
+                Also available for{" "}
+                {DESKTOP_BUILDS.filter((b) => b.platform !== platform).map((b, i, arr) => (
+                  <span key={b.platform}>
+                    <a
+                      href={`https://github.com/${GITHUB_REPO}/releases/latest/download/${b.file}`}
+                      style={{ color: "var(--s-text-2)", textDecoration: "underline" }}
+                    >
+                      {b.label}
+                    </a>
+                    {i < arr.length - 1 ? " and " : ""}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div
