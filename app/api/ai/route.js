@@ -16,7 +16,19 @@ import { NextResponse } from "next/server";
 // duplicated at every call site. Every caller goes through lib/ai.js's
 // aiComplete/aiCompleteJSON either way, so swapping the provider here is the
 // only change needed if this ever moves again.
-const GEMINI_MODEL = "gemini-2.5-flash";
+//
+// Pinned to "gemini-flash-latest" rather than a specific version (like the
+// old "gemini-2.5-flash", which Google cut off for new API keys well before
+// its own listed shutdown date, breaking this route with no warning) —
+// Google hot-swaps this alias to whatever their current stable Flash model
+// is, so it never needs to be manually bumped again when a version gets
+// retired. Google's own docs note this trades a small amount of
+// version-pinned predictability for never silently 404ing like this again;
+// for this app's light, occasional use, that's the right tradeoff. If a
+// future model swap ever changes behavior in a way you don't like, pin an
+// explicit version instead (see aistudio.google.com or
+// ai.google.dev/gemini-api/docs/models for current names).
+const GEMINI_MODEL = "gemini-flash-latest";
 
 export async function POST(request) {
   const { prompt, system, json } = await request.json().catch(() => ({}));

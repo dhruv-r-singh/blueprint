@@ -504,10 +504,24 @@ the key itself costs nothing and needs no credit card:
 5. Redeploy.
 
 Free tier is rate-limited (roughly 10 requests/minute, a few hundred/day on
-the `gemini-2.5-flash` model this route uses) — plenty for occasional
-summaries/suggestions, but if it ever gets hit hard, `app/api/ai/route.js`
-surfaces a 429 as "Hit the free daily AI limit" rather than failing
-silently.
+whatever model `gemini-flash-latest` currently points to) — plenty for
+occasional summaries/suggestions, but if it ever gets hit hard,
+`app/api/ai/route.js` surfaces a 429 as "Hit the free daily AI limit" rather
+than failing silently.
+
+**Update — a hardcoded model name broke this once already.** This route
+originally pinned an exact model, `gemini-2.5-flash`. Google cut new API
+keys off from that model ("This model ... is no longer available to new
+users") well before its own listed shutdown date, which broke every AI
+feature in the app with a 502 until this got noticed and fixed. Switched to
+the `gemini-flash-latest` alias instead, which Google automatically
+hot-swaps to whatever their current stable Flash model is — this specific
+failure mode shouldn't recur. If a future swap ever changes response
+quality/behavior in a way you don't like, you can pin an explicit version
+name again (check current names at
+[ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models)),
+just know you'll be back on the hook for updating it whenever that one gets
+retired too.
 
 ## Focus modes
 
@@ -818,3 +832,183 @@ show on a pending one in the mailbox). Deliberately not real chat — `replies`
 is a plain array on the request doc, capped client-side at
 `MAX_THREAD_LENGTH` (8 total messages) in `Mailbox.js`, both sides can add to
 it once accepted, and a denied request never unlocks it.
+
+## Email/password sign-in
+
+`/signin` and `/join/[code]` now have a plain email + password form below the
+OAuth buttons, with a "Don't have an account? Sign up" toggle (adds a Name
+field and calls `createUserWithEmailAndPassword` instead of
+`signInWithEmailAndPassword`) and a "Forgot password?" link
+(`sendPasswordResetEmail`). This is Firebase Auth's own built-in
+email/password provider — no new API routes, no third-party service.
+
+**One setup step:** Firebase console → **Authentication → Sign-in method** →
+enable **Email/Password**. Until that's on, sign-up/sign-in attempts fail
+with "this sign-in method isn't turned on yet" (`describeAuthError` already
+surfaces that clearly).
+
+A few things worth knowing:
+
+- Firebase enforces a 6-character minimum password itself (`auth/weak-password`
+  if shorter) — there's no separate password-strength config to set up.
+- New accounts get a verification email (`sendEmailVerification`) right after
+  sign-up, but nothing in the app actually checks `user.emailVerified` or
+  blocks unverified accounts from using it — it's sent as a courtesy/nudge,
+  not an enforced gate. If you want unverified users blocked from doing
+  anything until they click that link, that's a small addition (check
+  `auth.currentUser.emailVerified` in `useAuthGate.js`), not done here.
+- This slots into the exact same 2FA and account-matching machinery
+  everything else uses — `auth/multi-factor-auth-required` is caught the
+  same way as the OAuth buttons, so a phone/authenticator-enrolled account
+  still gets challenged on email/password sign-in too, no extra code needed.
+- No desktop-app-specific handling was needed here at all (unlike Google/
+  GitHub/Microsoft below) — it's just a form posting straight to Firebase
+  from whatever page is already loaded, popup-free either way.
+
+## Microsoft sign-in
+
+Same idea as Google/GitHub: "Continue with Microsoft" on `/signin` and
+`/join/[code]`, using Firebase Auth's built-in `microsoft.com` provider
+(`lib/firebase.js`'s `microsoftProvider`). Unlike LinkedIn, this one's
+natively supported by Firebase's backend — no generic-OIDC workaround
+needed, no separate hand-rolled callback route for the *web* flow.
+
+**Setup, in order:**
+
+1. **Azure AD app registration.** In the
+   [Azure Portal](https://portal.azure.com) → **Microsoft Entra ID → App
+   registrations → New registration**. Name it anything (e.g. "Blueprint").
+   Under **Supported account types**, pick "Accounts in any organizational
+   directory and personal Microsoft accounts" (matches the `tenant: "common"`
+   already set in `lib/firebase.js`) unless you specifically want to
+   restrict who can sign in.
+2. **Add the Firebase redirect URI.** In that app registration → 
+   **Authentication → Add a platform → Web** → redirect URI
+   `https://blueprint-drs.firebaseapp.com/__/auth/handler`.
+3. **Create a client secret.** **Certificates & secrets → New client
+   secret** → copy the value immediately (Azure only shows it once).
+4. **Enable it in Firebase.** Firebase console → **Authentication →
+   Sign-in method → Add new provider → Microsoft** → paste the
+   **Application (client) ID** (Overview page of the app registration) and
+   the client secret from step 3 → Save.
+5. **"Continue with Microsoft" now works on the web.** For it to also work
+   inside the desktop app, two more steps:
+   - **Add one more redirect URI to the SAME app registration** (Azure
+     supports multiple, unlike GitHub OAuth Apps) —
+     `https://<your-domain>/api/auth/microsoft/desktop-callback`.
+   - In **Vercel → Environment Variables**, add `MICROSOFT_CLIENT_ID` (same
+     Application ID as step 4) and `MICROSOFT_CLIENT_SECRET` (same secret as
+     step 3 — or generate a second one if you'd rather keep them separate),
+     then redeploy.
+
+**Why the desktop app needs its own OAuth routes at all** (mirroring Google/
+GitHub, see the "no longer uses an embedded popup" section above): Firebase's
+`signInWithPopup` calls `window.open()` under the hood, and
+`electron/main.js` intercepts every `window.open()` call and redirects it to
+the real system browser instead of an embedded Electron popup — a real
+browser tab has no way to hand the result back to `signInWithPopup`'s
+promise, so it would just hang. `app/api/auth/microsoft/desktop-start` +
+`desktop-callback` do the OAuth code exchange by hand instead (same pattern
+as Google/GitHub), and `electron/main.js`'s `EXTERNAL_ALLOWLIST` now
+includes `login.microsoftonline.com` so `openExternal` is allowed to send
+the user there. Push a new tag and rebuild the desktop installers (see
+"Desktop app download button" above) for that allowlist change to take
+effect.
+
+**One known caveat**, documented in code comments in
+`app/api/auth/microsoft/desktop-callback/route.js`: matching a desktop
+sign-in to the same Firebase user a web sign-in would create relies on
+Microsoft's `oid` (object ID) token claim, since that's Firebase's own
+convention for `microsoft.com` account linking — if that ever doesn't line
+up for some account type, the code falls back to matching by email (same
+fallback chain as Google/GitHub), so it should self-correct for anyone
+who's ever signed in with the same email on the web.
+
+## Mobile responsiveness
+
+The app had essentially one media query total before this — everything
+else assumed a wide desktop viewport, which is why it looked broken on a
+phone (a fixed 260px sidebar with no way to hide it was the single biggest
+offender: on a ~375px-wide screen it left almost nothing for the actual
+content). Landing page was already fine and untouched.
+
+What changed, all gated behind a `max-width: 880px` breakpoint in
+`globals.css` (matching the one breakpoint that already existed for the
+Overview tab's two-column layout) so nothing about the desktop experience
+changes:
+
+- **Project page's sidebar** (the Overview/Tasks/Chat/Calendar/etc. tab
+  list) becomes an off-canvas drawer instead of a permanent column —
+  opened via a new hamburger button next to the tab name at the top, closed
+  by tapping the dimmed backdrop or picking a tab. State lives in
+  `project/[id]/page.js` (`mobileSidebarOpen`); the slide-in/out is pure
+  CSS (`.shell-sidebar.open`, see `globals.css`).
+- **Preferences** (`/account`) — the fixed-170px settings nav rail next to
+  the content pane becomes a horizontal scrollable tab row above the
+  content instead of squeezing both into a too-narrow column.
+- General tightening: `.shell-view`/`.shell-main-top`/`.shell-card`
+  padding, the accent color picker (`.shell-colorpicker`) stacks instead of
+  sitting side-by-side, the topbar hides the signed-in user's name text
+  (keeps just the avatar, same click target) to free up room, and the
+  calendar grid shrinks slightly further under 480px for actual phones.
+- Two small fixed-width elements that would've overflowed a narrow
+  screen got capped instead of hardcoded: the profile page's headline
+  input (`app/profile/page.js`) and the mailbox panel
+  (`app/components/Mailbox.js`).
+
+Not deeply tested on a real device — the sandbox this session couldn't run
+a mobile emulator to screenshot against. If something specific still looks
+off on your phone, tell me what and where and I'll adjust it directly
+rather than guessing at more breakpoints blind.
+
+## Desktop app: menu bar + dynamic window title
+
+`electron/main.js` now builds a real File/Edit/View/Window/Help menu
+(`Menu.buildFromTemplate`) instead of just leaving Electron's bare default,
+and the window title updates to show the open project.
+
+**One thing worth knowing up front:** macOS shows two different "app name"
+elements, and only one of them can change. The **bold app name next to the
+Apple logo** in the top-left of the screen (what you referenced in the
+Claude screenshot) is fixed to the app's registered name at the OS level —
+no Electron app can change that per-window or per-document at runtime, full
+stop. What *can* change dynamically is the **window's own title bar** —
+that's what shows in the title bar itself, Cmd+Tab, Mission Control, the
+Dock (right-click), and the Window menu. That's the one this wires up:
+
+- Every signed-in page defaults the window title to plain `Blueprint`
+  (`app/components/TopNav.js`, since it mounts on every signed-in page).
+- Opening a project (`app/project/[id]/page.js`) overrides it to
+  `Blueprint — {project name}` once the project doc loads, and it updates
+  live if the project gets renamed.
+- Leaving the project page (any other signed-in page) resets it back to
+  plain `Blueprint` automatically.
+
+Plumbing: `lib/desktopAuth.js`'s `setDesktopTitle(name)` →
+`window.blueprintDesktop.setTitle(...)` (`electron/preload.js`) →
+`ipcMain.on("set-window-title", ...)` (`electron/main.js`) →
+`mainWindow.setTitle(...)`. All of this no-ops outside the desktop shell —
+nothing about the web app changes.
+
+The new menu itself: **File** (Close Window on macOS / Quit elsewhere),
+**Edit** (standard cut/copy/paste/undo, Electron's built-in `editMenu`
+role), **View** (Reload, Toggle Full Screen), **Window** (Electron's
+built-in `windowMenu` role — minimize/zoom/bring-all-to-front), **Help**
+("Blueprint on the web" → opens the site in the real browser). On macOS
+there's also the standard app menu (About/Hide/Quit) Electron adds
+automatically via `role: "appMenu"`.
+
+No setup steps needed for this one — it's all in `electron/main.js`,
+`electron/preload.js`, and `lib/desktopAuth.js`, and takes effect the next
+time you push a new tag and rebuild (see "Desktop app download button"
+above for the release process).
+
+## Desktop app: Download button hides itself inside the desktop app
+
+The landing page's "Download for [OS]" button (and the "Also available for
+X and Y" links under it) now only render on the *web* version of the site —
+opening `blueprint.dhruvrsingh.com` from inside the desktop app itself no
+longer shows a button to download the very app you're already running.
+Gated in `app/page.js` on the same `isDesktopApp()` check everything else
+in the desktop OAuth rework uses (`lib/desktopAuth.js`), so it needs no new
+setup — it just takes effect on the next deploy.

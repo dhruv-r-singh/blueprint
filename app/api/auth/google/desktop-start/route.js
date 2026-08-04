@@ -14,10 +14,11 @@ import crypto from "crypto";
 // the app once this completes.
 //
 // Reuses the same OAuth Client ID/secret as the Drive/Calendar
-// offline-refresh flow (GOOGLE_OAUTH_CLIENT_ID/SECRET — see SETUP_NOTES.md's
-// "Drive/Calendar tokens now refresh themselves" section), just with a real
-// redirect_uri this time instead of popup mode. One new setup step: add
-// this route's redirect URI to that same OAuth Client ID's "Authorized
+// offline-refresh flow (NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET
+// — see SETUP_NOTES.md's "Drive/Calendar tokens now refresh themselves"
+// section), just with a real redirect_uri this time instead of popup mode.
+// One new setup step: add this route's redirect URI to that same OAuth
+// Client ID's "Authorized
 // redirect URIs" in Google Cloud Console — see SETUP_NOTES.md.
 export async function GET(request) {
   const url = new URL(request.url);
@@ -31,7 +32,7 @@ export async function GET(request) {
   const redirectUri = `${url.origin}/api/auth/google/desktop-callback`;
   const params = new URLSearchParams({
     response_type: "code",
-    client_id: process.env.GOOGLE_OAUTH_CLIENT_ID || "",
+    client_id: process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID || "",
     redirect_uri: redirectUri,
     state,
     access_type: "offline",

@@ -28,7 +28,7 @@ export async function POST(request) {
   const redirectUri = `${url.origin}/api/auth/google/desktop-callback`;
   const params = new URLSearchParams({
     response_type: "code",
-    client_id: process.env.GOOGLE_OAUTH_CLIENT_ID || "",
+    client_id: process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID || "",
     redirect_uri: redirectUri,
     state,
     access_type: "offline",

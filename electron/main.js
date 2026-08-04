@@ -1,8 +1,11 @@
-const { app, BrowserWindow, shell, ipcMain, session } = require("electron");
+const { app, BrowserWindow, shell, ipcMain, session, Menu } = require("electron");
 const path = require("path");
 
-// Your live deployed app — the desktop shell just wraps this.
-const APP_URL = "https://blueprint-app-dhruv-raj-singh-s-projects.vercel.app";
+// Your live deployed app — the desktop shell just wraps this. Points at the
+// custom domain (not the raw Vercel URL) so sign-in, cookies, and the
+// blueprint:// OAuth handoff all consistently see the same origin the app
+// is actually branded and reachable at.
+const APP_URL = "https://blueprint.dhruvrsingh.com";
 
 // Domains it's ever legitimate for the app to ask the OS to open in the
 // user's real browser — Google/GitHub's OAuth screens, plus this app's own
@@ -16,6 +19,7 @@ const APP_URL = "https://blueprint-app-dhruv-raj-singh-s-projects.vercel.app";
 const EXTERNAL_ALLOWLIST = [
   /^https:\/\/accounts\.google\.com\//,
   /^https:\/\/github\.com\/login\/oauth\//,
+  /^https:\/\/login\.microsoftonline\.com\//,
   new RegExp(`^${APP_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/`),
 ];
 
@@ -26,7 +30,56 @@ const EXTERNAL_ALLOWLIST = [
 // replaces an old approach that got the app flagged as malware).
 const PROTOCOL = "blueprint";
 
+const isMac = process.platform === "darwin";
+app.setName("Blueprint");
+
 let mainWindow = null;
+
+// The bold app name macOS shows next to the Apple logo (top-left of the
+// screen) comes from the app's registered name and can't be changed
+// per-window/per-document at runtime — that's an OS-level constraint, not
+// something any Electron app can override. What CAN change dynamically is
+// this window's own title (title bar, Cmd+Tab, Mission Control, the Window
+// menu below, and the Dock on right-click) — the web app calls
+// blueprintDesktop.setTitle(...) via preload.js whenever the active
+// project changes, landing here.
+ipcMain.on("set-window-title", (event, title) => {
+  if (mainWindow) mainWindow.setTitle(title && typeof title === "string" ? title : "Blueprint");
+});
+
+function buildMenu() {
+  const template = [
+    ...(isMac ? [{ role: "appMenu" }] : []),
+    {
+      label: "File",
+      submenu: [isMac ? { role: "close" } : { role: "quit" }],
+    },
+    { role: "editMenu" },
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Reload",
+          accelerator: "CmdOrCtrl+R",
+          click: () => mainWindow?.reload(),
+        },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    { role: "windowMenu" },
+    {
+      role: "help",
+      submenu: [
+        {
+          label: "Blueprint on the web",
+          click: () => shell.openExternal(APP_URL),
+        },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -118,6 +171,7 @@ if (!gotLock) {
     // Handle the case where this very launch *was* the protocol link
     // (Windows/Linux cold start via blueprint://...).
     const launchUrl = process.argv.find((a) => a.startsWith(`${PROTOCOL}://`));
+    buildMenu();
     createWindow();
     if (launchUrl) handleProtocolUrl(launchUrl);
 

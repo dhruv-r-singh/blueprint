@@ -33,7 +33,7 @@ export async function GET(request) {
   if (!code) return fail("Google didn't return an authorization code.");
   if (!expectedState || state !== expectedState) return fail("Sign-in session expired — try again.");
 
-  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientId = process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   if (!clientId || !clientSecret) return fail("Google sign-in isn't configured on this deployment yet.");
 

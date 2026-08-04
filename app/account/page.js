@@ -507,10 +507,10 @@ export default function AccountSettingsPage() {
     <div className="shell">
       <TopNav user={user} />
 
-      <div className="shell-view" style={{ maxWidth: 880, margin: "0 auto", width: "100%", display: "flex", gap: 36, alignItems: "flex-start" }}>
-        <div style={{ width: 170, flex: "none", position: "sticky", top: 32 }}>
+      <div className="shell-view account-prefs-layout" style={{ maxWidth: 880, margin: "0 auto", width: "100%", display: "flex", gap: 36, alignItems: "flex-start" }}>
+        <div className="account-prefs-nav" style={{ width: 170, flex: "none", position: "sticky", top: 32 }}>
           <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 18 }}>Preferences</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <div className="account-prefs-tabs" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             {PREF_TABS.map((t) => (
               <button
                 key={t.key}
@@ -534,7 +534,7 @@ export default function AccountSettingsPage() {
           </div>
         </div>
 
-        <div style={{ flex: 1, minWidth: 0, maxWidth: 560 }}>
+        <div className="account-prefs-content" style={{ flex: 1, minWidth: 0, maxWidth: 560 }}>
           {error && <p className="notice">{error}</p>}
           {notice && <p className="notice" style={{ color: "var(--s-green, #5fbf8f)", borderColor: "var(--s-green, #5fbf8f)" }}>{notice}</p>}
 

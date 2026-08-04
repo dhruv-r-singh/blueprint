@@ -11,4 +11,9 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("blueprintDesktop", {
   isDesktop: true,
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  // Sets the window's title bar text — the web app calls this with a
+  // project name (or nothing, to reset to the default "Blueprint") when
+  // the active project changes. See main.js for why this is the window
+  // title, not the global macOS menu-bar app name.
+  setTitle: (title) => ipcRenderer.send("set-window-title", title),
 });

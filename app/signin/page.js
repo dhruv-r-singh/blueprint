@@ -11,9 +11,19 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { onAuthStateChanged, signInWithPopup, signInWithCustomToken, signOut } from "firebase/auth";
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithCustomToken,
+  signOut,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  sendEmailVerification,
+  updateProfile,
+} from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
-import { auth, db, googleProvider, githubProvider, firebaseConfigured } from "../../lib/firebase";
+import { auth, db, googleProvider, githubProvider, microsoftProvider, firebaseConfigured } from "../../lib/firebase";
 import { describeAuthError } from "../../lib/authErrors";
 import { integrationsDocPath, saveGoogleCredential, saveGithubCredential, savePublicIdentity } from "../../lib/integrations";
 import { isDesktopApp, startDesktopSignIn } from "../../lib/desktopAuth";
@@ -26,6 +36,16 @@ export default function SignInPage() {
   const [user, setUser] = useState(undefined);
   const [mfaError, setMfaError] = useState(null);
   const [lastKind, setLastKind] = useState(null);
+
+  // Email/password sign-in — a plain form alongside the OAuth buttons above,
+  // not a separate page. "signin" shows a sign-in form; "signup" adds a name
+  // field and creates an account instead.
+  const [authMode, setAuthMode] = useState("signin"); // signin | signup
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   useEffect(() => {
     if (!firebaseConfigured) {
@@ -58,16 +78,17 @@ export default function SignInPage() {
     if (!firebaseConfigured) return;
     setError("");
     setPending(kind);
-    // Inside the desktop shell, Google/GitHub sign-in happens in the user's
-    // real browser instead of an embedded popup — see lib/desktopAuth.js for
-    // why (the old embedded-popup approach got the app flagged as malware).
-    // app/desktop-auth/page.js picks the flow back up once it completes.
-    if ((kind === "google" || kind === "github") && isDesktopApp()) {
+    // Inside the desktop shell, Google/GitHub/Microsoft sign-in happens in
+    // the user's real browser instead of an embedded popup — see
+    // lib/desktopAuth.js for why (the old embedded-popup approach got the
+    // app flagged as malware). app/desktop-auth/page.js picks the flow back
+    // up once it completes.
+    if ((kind === "google" || kind === "github" || kind === "microsoft") && isDesktopApp()) {
       startDesktopSignIn(kind);
       return;
     }
     try {
-      const provider = kind === "google" ? googleProvider : githubProvider;
+      const provider = kind === "google" ? googleProvider : kind === "github" ? githubProvider : microsoftProvider;
       const result = await signInWithPopup(auth, provider);
       await handleSignedInResult(result, kind);
     } catch (err) {
@@ -80,6 +101,50 @@ export default function SignInPage() {
       if (msg) setError(msg);
     } finally {
       setPending(null);
+    }
+  }
+
+  /** Email/password sign-in or account creation — no popup, no provider, works fine inside the desktop shell as-is since it's just a form on our own already-loaded page. */
+  async function handleEmailAuth(e) {
+    e.preventDefault();
+    if (!firebaseConfigured) return;
+    setError("");
+    setResetSent(false);
+    setEmailBusy(true);
+    try {
+      let result;
+      if (authMode === "signup") {
+        result = await createUserWithEmailAndPassword(auth, email.trim(), password);
+        if (name.trim()) await updateProfile(result.user, { displayName: name.trim() });
+        sendEmailVerification(result.user).catch(() => {});
+      } else {
+        result = await signInWithEmailAndPassword(auth, email.trim(), password);
+      }
+      await handleSignedInResult(result, "password");
+    } catch (err) {
+      if (err.code === "auth/multi-factor-auth-required") {
+        setLastKind("password");
+        setMfaError(err);
+        return;
+      }
+      setError(describeAuthError(err, authMode === "signup" ? "Sign-up" : "Sign-in"));
+    } finally {
+      setEmailBusy(false);
+    }
+  }
+
+  async function handleForgotPassword() {
+    if (!firebaseConfigured) return;
+    if (!email.trim()) {
+      setError('Enter your email above, then click "Forgot password?" again.');
+      return;
+    }
+    setError("");
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      setResetSent(true);
+    } catch (err) {
+      setError(describeAuthError(err, "Password reset"));
     }
   }
 
@@ -185,6 +250,20 @@ export default function SignInPage() {
 
           <button
             className="shell-auth-btn"
+            onClick={() => handleSignIn("microsoft")}
+            disabled={!firebaseConfigured || pending !== null}
+          >
+            <svg width="20" height="20" viewBox="0 0 23 23">
+              <rect x="1" y="1" width="10" height="10" fill="#F25022" />
+              <rect x="12" y="1" width="10" height="10" fill="#7FBA00" />
+              <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
+              <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
+            </svg>
+            {pending === "microsoft" ? "Signing in…" : "Continue with Microsoft"}
+          </button>
+
+          <button
+            className="shell-auth-btn"
             onClick={handleLinkedInClick}
             disabled={!firebaseConfigured || pending !== null}
           >
@@ -192,6 +271,81 @@ export default function SignInPage() {
               <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
             </svg>
             {pending === "linkedin" ? "Signing in…" : "Continue with LinkedIn"}
+          </button>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0 16px" }}>
+            <div style={{ flex: 1, height: 1, background: "var(--s-border)" }} />
+            <span style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>or</span>
+            <div style={{ flex: 1, height: 1, background: "var(--s-border)" }} />
+          </div>
+
+          <form onSubmit={handleEmailAuth} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {authMode === "signup" && (
+              <input
+                type="text"
+                placeholder="Name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="shell-input"
+                style={{ width: "100%", padding: 10, fontFamily: "inherit", fontSize: 14 }}
+              />
+            )}
+            <input
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+              className="shell-input"
+              style={{ width: "100%", padding: 10, fontFamily: "inherit", fontSize: 14 }}
+            />
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+              autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+              className="shell-input"
+              style={{ width: "100%", padding: 10, fontFamily: "inherit", fontSize: 14 }}
+            />
+            {authMode === "signin" && (
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                className="ghost"
+                style={{ fontSize: 12, alignSelf: "flex-end", padding: 0 }}
+              >
+                Forgot password?
+              </button>
+            )}
+            {resetSent && (
+              <p style={{ fontSize: 12, color: "var(--s-text-2)" }}>Check your email for a reset link.</p>
+            )}
+            <button
+              type="submit"
+              className="shell-auth-btn primary"
+              disabled={!firebaseConfigured || pending !== null || emailBusy}
+            >
+              {emailBusy
+                ? authMode === "signup" ? "Creating account…" : "Signing in…"
+                : authMode === "signup" ? "Create account" : "Sign in"}
+            </button>
+          </form>
+
+          <button
+            type="button"
+            onClick={() => {
+              setAuthMode(authMode === "signup" ? "signin" : "signup");
+              setError("");
+              setResetSent(false);
+            }}
+            className="ghost"
+            style={{ fontSize: 12.5, marginTop: 12, width: "100%", textAlign: "center" }}
+          >
+            {authMode === "signup" ? "Already have an account? Sign in" : "Don't have an account? Sign up"}
           </button>
         </div>
       </div>

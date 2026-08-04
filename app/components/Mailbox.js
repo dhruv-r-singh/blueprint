@@ -133,7 +133,7 @@ export default function Mailbox({ user }) {
       {open && (
         <div
           className="shell-card"
-          style={{ position: "absolute", bottom: "calc(100% + 12px)", right: 0, width: 340, maxHeight: 460, display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" }}
+          style={{ position: "absolute", bottom: "calc(100% + 12px)", right: 0, width: "min(340px, calc(100vw - 40px))", maxHeight: 460, display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" }}
         >
           <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--s-border)", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 13 }}>
             Mailbox

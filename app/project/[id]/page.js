@@ -50,6 +50,7 @@ import { focusModeInfo } from "../../components/FocusMode";
 import VideoCall from "./VideoCall";
 import { useAuthGate } from "../../../lib/useAuthGate";
 import { isOnline, lastSeenLabel } from "../../../lib/presence";
+import { setDesktopTitle } from "../../../lib/desktopAuth";
 
 const COLUMNS = [
   { key: "todo", label: "To do" },
@@ -168,6 +169,13 @@ export default function ProjectPage() {
   const [project, setProject] = useState(undefined);
   const [myProjects, setMyProjects] = useState([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  // Mobile only — .shell-sidebar is a fixed 260px column on desktop, but on
+  // a phone viewport that leaves almost nothing for actual content, so
+  // below the CSS breakpoint (see globals.css) it becomes an off-canvas
+  // drawer instead, toggled by a hamburger button in .shell-main-top and
+  // dismissed by the backdrop or by picking a tab. Has zero effect above
+  // the breakpoint — the CSS there ignores this class entirely.
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [draggedId, setDraggedId] = useState(null);
   const [allProfiles, setAllProfiles] = useState([]);
@@ -285,6 +293,15 @@ export default function ProjectPage() {
 
   useAuthGate(user);
 
+  // Mobile drawer (see mobileSidebarOpen above) — closes automatically the
+  // moment the active tab changes, no matter which of the many setTab(...)
+  // call sites triggered it (sidebar buttons, "jump to task" links inside
+  // the content area, etc.), instead of having to thread a close-the-drawer
+  // call through every one of them individually.
+  useEffect(() => {
+    setMobileSidebarOpen(false);
+  }, [tab]);
+
   useEffect(() => {
     if (!id) return;
     const unsub = onSnapshot(doc(db, "projects", id), (snap) => {
@@ -292,6 +309,13 @@ export default function ProjectPage() {
     });
     return () => unsub();
   }, [id]);
+
+  // Desktop app window title bar: "Blueprint — {project name}" once the
+  // project doc loads (see lib/desktopAuth.js). No-ops outside the Electron
+  // shell. TopNav resets this back to plain "Blueprint" on every other page.
+  useEffect(() => {
+    if (project?.name) setDesktopTitle(project.name);
+  }, [project?.name]);
 
   // Subscribe to every member's public profile doc so the Team panel
   // (Overview tab) can show their name/avatar and a live online/offline
@@ -1649,7 +1673,12 @@ export default function ProjectPage() {
       <TopNav user={user} />
 
       <div className="shell-body">
-        <div className="shell-sidebar">
+        {/* Mobile only (see globals.css) — dims and closes the drawer on
+            outside-tap; doesn't render/do anything above the breakpoint. */}
+        {mobileSidebarOpen && (
+          <div className="shell-sidebar-backdrop" onClick={() => setMobileSidebarOpen(false)} />
+        )}
+        <div className={"shell-sidebar" + (mobileSidebarOpen ? " open" : "")}>
           <div className="shell-switcher" data-tour="switcher" onClick={() => setDropdownOpen((v) => !v)}>
             {project?.imageUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -1765,6 +1794,18 @@ export default function ProjectPage() {
 
         <div className="shell-main">
           <div className="shell-main-top">
+            {/* Mobile only (see globals.css) — opens the tab/channel drawer
+                that's always visible as a sidebar on wider screens. */}
+            <button
+              type="button"
+              className="shell-mobile-sidebar-btn"
+              aria-label="Open channels"
+              onClick={() => setMobileSidebarOpen(true)}
+            >
+              <span />
+              <span />
+              <span />
+            </button>
             <span className="shell-cname">{activeChannel?.label}</span>
             <span className="shell-cdesc">{activeChannel?.desc}</span>
           </div>

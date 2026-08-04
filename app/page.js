@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
 import { auth, db, firebaseConfigured } from "../lib/firebase";
+import { isDesktopApp } from "../lib/desktopAuth";
 import ParticlesBackground from "./components/ParticlesBackground";
 
 // Set via NEXT_PUBLIC_GITHUB_REPO (Vercel env var) — "owner/repo", e.g.
@@ -53,9 +54,15 @@ export default function Page() {
   const [user, setUser] = useState(undefined);
   const [error, setError] = useState("");
   const [platform, setPlatform] = useState("mac");
+  // Defaults to false (matching server-side render) and flips after mount —
+  // isDesktopApp() reads window.blueprintDesktop, which doesn't exist during
+  // SSR, so checking it inline during render would mismatch the server HTML
+  // whenever it's actually true. Same pattern as the platform detection above.
+  const [desktopApp, setDesktopApp] = useState(false);
 
   useEffect(() => {
     setPlatform(detectPlatform());
+    setDesktopApp(isDesktopApp());
   }, []);
 
   useEffect(() => {
@@ -146,7 +153,7 @@ export default function Page() {
                 Get started
               </Link>
 
-              {GITHUB_REPO && (
+              {!desktopApp && GITHUB_REPO && (
                 <a
                   href={`https://github.com/${GITHUB_REPO}/releases/latest/download/${
                     DESKTOP_BUILDS.find((b) => b.platform === platform).file
@@ -159,7 +166,7 @@ export default function Page() {
               )}
             </div>
 
-            {GITHUB_REPO && (
+            {!desktopApp && GITHUB_REPO && (
               <div style={{ marginTop: 14, fontSize: 12.5, color: "var(--s-text-2)" }}>
                 Also available for{" "}
                 {DESKTOP_BUILDS.filter((b) => b.platform !== platform).map((b, i, arr) => (

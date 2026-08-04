@@ -13,6 +13,7 @@ import { signOut } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../../lib/firebase";
 import { startPresenceHeartbeat } from "../../lib/presence";
+import { setDesktopTitle } from "../../lib/desktopAuth";
 import FocusMode from "./FocusMode";
 import Mailbox from "./Mailbox";
 
@@ -70,6 +71,16 @@ export default function TopNav({ user, extraLink }) {
     if (!user?.uid) return;
     return startPresenceHeartbeat(user.uid);
   }, [user?.uid]);
+
+  // Desktop app window title: default back to plain "Blueprint" on every
+  // page except the project page, which overrides this with the project
+  // name once it loads (see app/project/[id]/page.js). No-ops outside the
+  // Electron shell. Keyed on pathname so navigating away from a project
+  // (whose page set a custom title) resets it here instead of leaving a
+  // stale project name in the title bar.
+  useEffect(() => {
+    setDesktopTitle();
+  }, [pathname]);
 
   // TopNav mounts on every signed-in page, so it's also the one place that
   // can apply Appearance/Accessibility preferences (set on /account's

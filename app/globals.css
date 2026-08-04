@@ -1207,14 +1207,12 @@ button.ghost:hover {
   border-radius: 6px;
   color: #fff;
 }
-/* Drive's real mark is already full-color (see IconDriveMark in icons.js),
-   so it sits on a neutral chip instead of a flat brand-blue box — a solid
-   blue rectangle with plain white "Drive" text next to the actual
-   multi-color logo elsewhere in the app looked like two different brands. */
+/* IconDriveMark (icons.js) is a plain white-outline mark now, not a
+   full-color logo — it needs a solid background to read clearly, same as
+   GitHub's badge below, instead of the neutral/muted chip this used to be
+   (that only worked when the icon itself carried the color). */
 .shell-attachment-badge.drive {
-  background: var(--s-bg-elevated);
-  border: 1px solid var(--s-border);
-  color: var(--s-text-2);
+  background: #0f9d58;
 }
 .shell-attachment-badge.github {
   background: #24292e;
@@ -1846,4 +1844,158 @@ input[type="range"]::-moz-range-thumb {
 .shell-audio-volume {
   width: 44px !important;
   height: 3px !important;
+}
+
+/* ===================== MOBILE ===================== */
+
+/* Project page's tab/channel drawer toggle (see .shell-sidebar below) —
+   hidden by default, same 3-bar look as TopNav's account hamburger. Only
+   shown below the drawer breakpoint. */
+.shell-mobile-sidebar-btn {
+  display: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  flex: none;
+  margin-right: 2px;
+}
+.shell-mobile-sidebar-btn span {
+  display: block;
+  width: 16px;
+  height: 2px;
+  background: var(--s-text-2);
+  border-radius: 2px;
+}
+
+@media (max-width: 880px) {
+  .shell-mobile-sidebar-btn {
+    display: flex;
+  }
+
+  /* .shell-sidebar is a permanent 260px column on wider screens — on a
+     phone that leaves almost nothing for .shell-main, so below this
+     breakpoint it becomes an off-canvas drawer instead, toggled by
+     .shell-mobile-sidebar-btn above (state lives in project/[id]/page.js).
+     Fixed positioning takes it out of .shell-body's flex flow entirely, so
+     .shell-main automatically reclaims the full width — no extra rule
+     needed there. */
+  .shell-sidebar {
+    position: fixed;
+    top: 60px; /* below .shell-topbar, which stays put and usable */
+    bottom: 0;
+    left: 0;
+    z-index: 550;
+    width: min(280px, 82vw);
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.35);
+  }
+  .shell-sidebar.open {
+    transform: translateX(0);
+  }
+  /* Preferences → Appearance → Layout can move the sidebar to the right —
+     the drawer needs to slide in from that same side to match. */
+  body.sidebar-right .shell-sidebar {
+    left: auto;
+    right: 0;
+    transform: translateX(100%);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+  }
+  body.sidebar-right .shell-sidebar.open {
+    transform: translateX(0);
+  }
+  .shell-sidebar-backdrop {
+    position: fixed;
+    top: 60px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 540;
+  }
+
+  /* Desktop's generous padding (36px view, 40px cards, 18-26px headers)
+     eats a huge share of a ~375px phone screen — tighten it everywhere. */
+  .shell-view {
+    padding: 18px;
+  }
+  .shell-main-top {
+    padding: 14px 16px;
+  }
+  .shell-card {
+    padding: 24px;
+  }
+  .shell-topbar {
+    padding: 0 14px;
+    gap: 8px;
+  }
+  /* The signed-in name next to the avatar is the first thing to go when
+     .shell-topbar-right is tight — the avatar alone (already opens the
+     same menu) is enough on a narrow screen. */
+  .shell-topbar-user-name {
+    display: none;
+  }
+  .shell-overview-grid {
+    gap: 20px;
+  }
+  /* Side-by-side sv-square + hue/preview column (custom accent color
+     picker, /account) doesn't have room to stay side-by-side this narrow. */
+  .shell-colorpicker {
+    flex-direction: column;
+  }
+  .shell-colorpicker-sv {
+    width: 100%;
+    height: 140px;
+  }
+
+  /* Preferences (/account) — a fixed-170px nav rail + content pane side by
+     side (all inline styles, hence the !important — nothing else in this
+     file overrides an inline style otherwise). Below the breakpoint the nav
+     becomes a horizontal scrollable tab row above the content instead of a
+     column squeezed down to nothing. */
+  .account-prefs-layout {
+    flex-direction: column !important;
+    gap: 18px !important;
+  }
+  .account-prefs-nav {
+    width: 100% !important;
+    position: static !important;
+  }
+  .account-prefs-tabs {
+    flex-direction: row !important;
+    overflow-x: auto;
+    gap: 6px !important;
+    padding-bottom: 4px;
+  }
+  .account-prefs-tabs button {
+    flex: none;
+    white-space: nowrap;
+  }
+  .account-prefs-content {
+    max-width: none !important;
+  }
+}
+
+@media (max-width: 480px) {
+  /* One more notch tighter for actual phones (vs. small tablets, which the
+     880px breakpoint above already covers reasonably). */
+  .shell-view {
+    padding: 14px;
+  }
+  .shell-card {
+    padding: 20px;
+  }
+  .shell-cal-cell {
+    min-height: 40px;
+  }
+  .shell-cal-event-chip {
+    font-size: 8.5px;
+  }
 }

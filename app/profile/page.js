@@ -270,8 +270,8 @@ export default function ProfilePage() {
                   style={{ display: "none" }}
                 />
               </label>
-              <div>
-                <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 22 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 22, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {user.displayName || user.email}
                 </div>
                 <input
@@ -286,7 +286,7 @@ export default function ProfilePage() {
                     color: "var(--s-text-2)",
                     fontSize: 13,
                     padding: "4px 0",
-                    width: 320,
+                    width: "min(320px, 100%)",
                   }}
                 />
               </div>
