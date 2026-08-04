@@ -20,6 +20,7 @@ import {
   serverTimestamp,
   arrayUnion,
   arrayRemove,
+  deleteField,
 } from "firebase/firestore";
 import { auth, db } from "../../../lib/firebase";
 import { searchRoleTitles } from "../../../lib/roleTitles";
@@ -34,6 +35,13 @@ import {
   deleteCalendarEvent,
   listCalendarEvents,
   uploadFileToDrive,
+  createDriveFolder,
+  createGithubRepo,
+  deleteDriveFolder,
+  deleteGithubRepo,
+  listDriveFolderFiles,
+  downloadDriveFile,
+  slugifyRepoName,
 } from "../../../lib/integrations";
 import { uploadFile, deleteFile, safeFileName, compressImage } from "../../../lib/storage";
 import { aiComplete, aiCompleteJSON } from "../../../lib/ai";
@@ -45,7 +53,7 @@ import MessageRequestModal from "../../components/MessageRequestModal";
 import VideoPlayer from "../../components/VideoPlayer";
 import AudioPlayer from "../../components/AudioPlayer";
 import Toggle from "../../components/Toggle";
-import { IconGear, IconMic, IconSparkle, IconLayout, IconCheckSquare, IconTarget, IconCalendar, IconChat, IconGithubMark, IconDriveMark, IconReply, IconReact, IconTranslate, IconSearch, IconMailbox } from "../../components/icons";
+import { IconGear, IconMic, IconSparkle, IconLayout, IconCheckSquare, IconTarget, IconCalendar, IconChat, IconGithubMark, IconDriveMark, IconReply, IconReact, IconTranslate, IconTranscript, IconSearch, IconMailbox } from "../../components/icons";
 import { focusModeInfo } from "../../components/FocusMode";
 import VideoCall from "./VideoCall";
 import { useAuthGate } from "../../../lib/useAuthGate";
@@ -148,6 +156,39 @@ const TOUR_STEPS = [
   },
 ];
 
+// Lazily loads JSZip from cdnjs — same lazy-CDN-script pattern CADViewer.js
+// uses for Three.js (see SETUP_NOTES.md's "3D CAD viewer" section). Only
+// needed by the Drive "Download files" button in project Settings, so
+// there's no reason to bundle it into every page's JS otherwise.
+let jsZipPromise = null;
+function loadJSZip() {
+  if (typeof window === "undefined") return Promise.reject(new Error("Client only."));
+  if (window.JSZip) return Promise.resolve(window.JSZip);
+  if (!jsZipPromise) {
+    jsZipPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+      script.async = true;
+      script.onload = () => resolve(window.JSZip);
+      script.onerror = () => reject(new Error("Couldn't load the zip library."));
+      document.head.appendChild(script);
+    });
+  }
+  return jsZipPromise;
+}
+
+/** Triggers a browser download of a Blob with a given filename — an object URL plus a throwaway link click, no server round-trip needed. */
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 const SETTINGS_CHANNEL = { key: "settings", label: "Settings", desc: "Project name, roles, and invites" };
 const DOCS_CHANNEL = { key: "docs", label: "Documentation", desc: "Shared notes for this project" };
 const FILES_CHANNEL = { key: "files", label: "Files", desc: "Every file and link shared in this project" };
@@ -200,7 +241,11 @@ export default function ProjectPage() {
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [aiSummaryText, setAiSummaryText] = useState("");
   const [aiSummaryError, setAiSummaryError] = useState("");
-  const [meetingStartSignal, setMeetingStartSignal] = useState(0);
+  // { id: <meeting message id> | null, ts: <Date.now() at last join/start> } —
+  // bumping `ts` (even for the same id) is what tells VideoCall's effect to
+  // actually (re)join; `id` tells it which "meeting" chat message to update
+  // (participants, recording state) as this call progresses.
+  const [meetingSignal, setMeetingSignal] = useState({ id: null, ts: 0 });
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
   const [showAddTask, setShowAddTask] = useState(false);
@@ -217,6 +262,13 @@ export default function ProjectPage() {
   const [inviteBusy, setInviteBusy] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [deletingProject, setDeletingProject] = useState(false);
+  const [driveToggleBusy, setDriveToggleBusy] = useState(false);
+  const [githubToggleBusy, setGithubToggleBusy] = useState(false);
+  const [integrationError, setIntegrationError] = useState("");
+  // null | "drive" | "github" — which "Download files" button (if either)
+  // is currently zipping/fetching, so both can show their own busy state
+  // without a second click starting a duplicate download mid-flight.
+  const [downloadBusy, setDownloadBusy] = useState(null);
   const [imageUploadPct, setImageUploadPct] = useState(null);
   const [imageError, setImageError] = useState("");
   const [bannerUploadPct, setBannerUploadPct] = useState(null);
@@ -269,6 +321,7 @@ export default function ProjectPage() {
   const [viewingCad, setViewingCad] = useState(null); // { url, kind } | null
   const [memberProfiles, setMemberProfiles] = useState({}); // uid -> profile doc data
   const [translations, setTranslations] = useState({}); // messageId -> { text, loading, error, lang, sameLanguage }
+  const [transcriptions, setTranscriptions] = useState({}); // messageId -> { text, loading, error }
   const [presenceTick, setPresenceTick] = useState(0); // bumps periodically so online/offline labels stay fresh
   const [replyingTo, setReplyingTo] = useState(null); // { id, senderName, text } | null
   const [chatSearch, setChatSearch] = useState("");
@@ -917,6 +970,31 @@ export default function ProjectPage() {
     });
   }
 
+  /** On-demand voice message transcription via /api/transcribe (Gemini, reads the audio directly) — same per-viewer, nothing-stored-or-broadcast spirit as translateMessage above. */
+  async function transcribeMessage(m) {
+    setTranscriptions((prev) => ({ ...prev, [m.id]: { ...(prev[m.id] || {}), loading: true, error: "" } }));
+    try {
+      const res = await fetch("/api/transcribe", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: m.url }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Couldn't transcribe that recording.");
+      setTranscriptions((prev) => ({ ...prev, [m.id]: { text: data.text, loading: false, error: "" } }));
+    } catch (err) {
+      setTranscriptions((prev) => ({ ...prev, [m.id]: { loading: false, error: err.message || "Couldn't transcribe that recording." } }));
+    }
+  }
+
+  function dismissTranscription(messageId) {
+    setTranscriptions((prev) => {
+      const next = { ...prev };
+      delete next[messageId];
+      return next;
+    });
+  }
+
   function dismissTranslation(messageId) {
     setTranslations((prev) => {
       const next = { ...prev };
@@ -949,11 +1027,37 @@ export default function ProjectPage() {
     });
   }
 
+  /** Posts a new "meeting" chat message (the joinable button) and immediately joins it — this is what "Start a meeting" in the composer's + menu calls. The message itself is what makes the meeting show up in Files afterward, recording and all. */
+  async function startMeeting() {
+    if (!user) return;
+    const name = user.displayName || user.email || "Unknown";
+    const meetingRef = await addDoc(collection(db, "projects", id, "messages"), {
+      type: "meeting",
+      status: "live",
+      startedBy: user.uid,
+      startedByName: name,
+      senderId: user.uid,
+      senderName: name,
+      participantUids: [],
+      recordingActive: false,
+      recordingBy: null,
+      recordingByName: null,
+      recordings: [],
+      createdAt: serverTimestamp(),
+    });
+    setMeetingSignal({ id: meetingRef.id, ts: Date.now() });
+  }
+
+  /** Joins an existing meeting message (clicked from its chat card, or from Files) — same call room, just doesn't create a new message. */
+  function joinMeeting(meetingId) {
+    setMeetingSignal({ id: meetingId, ts: Date.now() });
+  }
+
   function startReply(m) {
     setReplyingTo({
       id: m.id,
       senderName: m.senderName,
-      text: m.type === "voice" ? "Voice message" : m.type === "attachment" ? m.title || "Attachment" : m.text || "",
+      text: m.type === "voice" ? "Voice message" : m.type === "meeting" ? "Meeting" : m.type === "attachment" ? m.title || "Attachment" : m.text || "",
     });
   }
 
@@ -1360,15 +1464,19 @@ export default function ProjectPage() {
     }
   }
 
-  /** AI role maker — asks the free AI for a short list of roles that make sense given the project's title/description, so the user isn't starting the "Roles needed" list from a blank input. Suggestions are shown as add-one-click chips, never written to Firestore automatically. */
+  /** AI role maker — asks the free AI for a short list of roles that make sense given the project's name/brief, so the user isn't starting the "Roles needed" list from a blank input. Suggestions are shown as add-one-click chips, never written to Firestore automatically. Requires a real brief — both the project-creation form and the Settings tab already refuse to save an empty one, but this guards against the rare grandfathered project from before that validation existed, and gives a clear message instead of asking the AI to work from nothing. */
   async function suggestRolesWithAI() {
+    if (!project?.brief?.trim()) {
+      setAiRolesError("This project doesn't have a brief yet — add one in Settings first so the AI has something to work from.");
+      return;
+    }
     setAiRolesLoading(true);
     setAiRolesError("");
     setAiSuggestedRoles([]);
     try {
       const existing = (project.roles || []).map((r) => `${r.code}: ${r.title}`).join(", ") || "none yet";
       const data = await aiCompleteJSON(
-        `Project title: "${project.title || "Untitled project"}"\nProject description: "${project.description || "No description given."}"\nRoles already on the team: ${existing}\n\nSuggest 4-6 NEW roles (not already listed) this project team likely needs to fill. For each, give a short uppercase code (2-4 letters, like SW, AI, UX, HW, BIZ), a role title, and a one-sentence description of what that role would do on this specific project.`,
+        `Project name: "${project.name || "Untitled project"}"\nProject brief: "${project.brief}"\nRoles already on the team: ${existing}\n\nSuggest 4-6 NEW roles (not already listed) this project team likely needs to fill. For each, give a short uppercase code (2-4 letters, like SW, AI, UX, HW, BIZ), a role title, and a one-sentence description of what that role would do on this specific project.`,
         {
           system:
             'You are helping a hackathon/project team figure out what roles to recruit for. Return a JSON array like [{"code":"SW","title":"Software Engineer","description":"..."}].',
@@ -1406,7 +1514,7 @@ export default function ProjectPage() {
       if (recent.length === 0) throw new Error("No messages yet to summarize.");
       const transcript = recent
         .map((m) => {
-          const body = m.type === "voice" ? "[voice message]" : m.type === "attachment" ? `[shared file: ${m.title || m.url || "attachment"}]` : m.text || "";
+          const body = m.type === "voice" ? "[voice message]" : m.type === "meeting" ? `[meeting — ${m.status === "live" ? "in progress" : "ended"}]` : m.type === "attachment" ? `[shared file: ${m.title || m.url || "attachment"}]` : m.text || "";
           return body ? `${m.senderName || "Someone"}: ${body}` : null;
         })
         .filter(Boolean)
@@ -1425,7 +1533,7 @@ export default function ProjectPage() {
 
   async function saveProjectMeta(e) {
     e.preventDefault();
-    if (!settingsName.trim()) return;
+    if (!settingsName.trim() || !settingsBrief.trim()) return;
     setSavingMeta(true);
     try {
       await updateDoc(doc(db, "projects", id), {
@@ -1647,6 +1755,151 @@ export default function ProjectPage() {
     } catch (err) {
       console.error("Failed to delete project:", err);
       setDeletingProject(false);
+    }
+  }
+
+  /**
+   * Turns the "Connect Drive" toggle in Settings on/off. On: creates a real
+   * Drive folder (the same call project creation itself uses) and saves its
+   * id/url on the project doc. Off: permanently deletes that folder after a
+   * clear warning — same window.confirm pattern as "Delete project" above,
+   * since there's no undo once it's gone. Owner-only (enforced here and in
+   * the JSX that renders the toggle), since the folder is created/deleted
+   * using the CALLER's own Drive connection — only the account that
+   * actually owns the folder in Google's eyes can delete it.
+   */
+  async function toggleDriveConnection(next) {
+    if (!user || !project || user.uid !== project.ownerId) return;
+    setIntegrationError("");
+    if (next) {
+      if (!myIntegrations?.driveAccessToken) {
+        setIntegrationError("Connect Google Drive in Preferences first, then try this toggle again.");
+        return;
+      }
+      setDriveToggleBusy(true);
+      try {
+        const token = await ensureFreshGoogleToken(myIntegrations);
+        const folder = await createDriveFolder(token, project.name);
+        await updateDoc(doc(db, "projects", id), { driveFolderId: folder.id, driveFolderUrl: folder.url });
+      } catch (err) {
+        console.error("Drive folder creation failed:", err);
+        setIntegrationError(err.message || "Couldn't create the Drive folder.");
+      } finally {
+        setDriveToggleBusy(false);
+      }
+      return;
+    }
+
+    if (!project.driveFolderId) return;
+    if (
+      !window.confirm(
+        `Disconnect Drive from "${project.name}"? This PERMANENTLY DELETES the Drive folder and everything in it — download the files first if you want to keep them. There's no undo.`
+      )
+    ) {
+      return;
+    }
+    setDriveToggleBusy(true);
+    try {
+      const token = await ensureFreshGoogleToken(myIntegrations);
+      await deleteDriveFolder(token, project.driveFolderId);
+      await updateDoc(doc(db, "projects", id), { driveFolderId: deleteField(), driveFolderUrl: deleteField() });
+    } catch (err) {
+      console.error("Drive folder deletion failed:", err);
+      setIntegrationError(err.message || "Couldn't delete the Drive folder.");
+    } finally {
+      setDriveToggleBusy(false);
+    }
+  }
+
+  /** Same idea as toggleDriveConnection, for the "Connect GitHub" toggle. GitHub's own access tokens don't expire the way Google's do, so there's no refresh step needed here. */
+  async function toggleGithubConnection(next) {
+    if (!user || !project || user.uid !== project.ownerId) return;
+    setIntegrationError("");
+    if (next) {
+      if (!myIntegrations?.githubAccessToken) {
+        setIntegrationError("Connect GitHub in Preferences first, then try this toggle again.");
+        return;
+      }
+      setGithubToggleBusy(true);
+      try {
+        const repo = await createGithubRepo(myIntegrations.githubAccessToken, project.name, { private: true });
+        await updateDoc(doc(db, "projects", id), { githubRepoUrl: repo.url, githubRepoFullName: repo.fullName });
+      } catch (err) {
+        console.error("GitHub repo creation failed:", err);
+        setIntegrationError(err.message || "Couldn't create the GitHub repo.");
+      } finally {
+        setGithubToggleBusy(false);
+      }
+      return;
+    }
+
+    if (!project.githubRepoFullName) return;
+    if (
+      !window.confirm(
+        `Disconnect GitHub from "${project.name}"? This PERMANENTLY DELETES the ${project.githubRepoFullName} repo and everything in it — download the files first if you want to keep them. There's no undo.`
+      )
+    ) {
+      return;
+    }
+    setGithubToggleBusy(true);
+    try {
+      await deleteGithubRepo(myIntegrations.githubAccessToken, project.githubRepoFullName);
+      await updateDoc(doc(db, "projects", id), { githubRepoUrl: deleteField(), githubRepoFullName: deleteField() });
+    } catch (err) {
+      console.error("GitHub repo deletion failed:", err);
+      setIntegrationError(err.message || "Couldn't delete the GitHub repo. " + (err.message?.includes("reconnect") ? "" : "If this keeps happening, reconnect GitHub in Preferences."));
+    } finally {
+      setGithubToggleBusy(false);
+    }
+  }
+
+  /**
+   * Downloads every file in the connected Drive folder or GitHub repo as a
+   * single zip, named "{project name} | Drive.zip" / "{project name} |
+   * GitHub.zip" — lets anyone grab a local copy before disconnecting (or
+   * any time, really). Drive: fetched and zipped client-side (JSZip, see
+   * loadJSZip above) since Drive's API has no "zip this folder" endpoint of
+   * its own. GitHub: GitHub already generates a real zip archive of the
+   * repo on request, so this just fetches that directly and saves it — no
+   * client-side zipping needed there.
+   */
+  async function downloadProjectFiles(kind) {
+    if (!project) return;
+    setIntegrationError("");
+    setDownloadBusy(kind);
+    try {
+      if (kind === "drive") {
+        if (!project.driveFolderId || !myIntegrations?.driveAccessToken) throw new Error("Drive isn't connected.");
+        const token = await ensureFreshGoogleToken(myIntegrations);
+        const files = await listDriveFolderFiles(token, project.driveFolderId);
+        if (files.length === 0) throw new Error("That Drive folder is empty — nothing to download.");
+        const JSZip = await loadJSZip();
+        const zip = new JSZip();
+        for (const file of files) {
+          try {
+            const blob = await downloadDriveFile(token, file);
+            const isGoogleNative = file.mimeType?.startsWith("application/vnd.google-apps.");
+            zip.file(isGoogleNative ? `${file.name}.pdf` : file.name, blob);
+          } catch (err) {
+            console.error(`Skipping "${file.name}" (couldn't download it):`, err);
+          }
+        }
+        const zipBlob = await zip.generateAsync({ type: "blob" });
+        downloadBlob(zipBlob, `${project.name} | Drive.zip`);
+      } else {
+        if (!project.githubRepoFullName || !myIntegrations?.githubAccessToken) throw new Error("GitHub isn't connected.");
+        const res = await fetch(`https://api.github.com/repos/${project.githubRepoFullName}/zipball`, {
+          headers: { Authorization: `Bearer ${myIntegrations.githubAccessToken}` },
+        });
+        if (!res.ok) throw new Error("Couldn't download that GitHub repo.");
+        const blob = await res.blob();
+        downloadBlob(blob, `${project.name} | GitHub.zip`);
+      }
+    } catch (err) {
+      console.error(`${kind} download failed:`, err);
+      setIntegrationError(err.message || "Download failed — try again.");
+    } finally {
+      setDownloadBusy(null);
     }
   }
 
@@ -1890,7 +2143,8 @@ export default function ProjectPage() {
                       className="shell-btn-outline"
                       style={{ fontSize: 11, height: 26, padding: "0 10px", display: "inline-flex", alignItems: "center", gap: 5 }}
                       onClick={suggestRolesWithAI}
-                      disabled={aiRolesLoading}
+                      disabled={aiRolesLoading || !project?.brief?.trim()}
+                      title={!project?.brief?.trim() ? "Add a brief in Settings first" : undefined}
                     >
                       <IconSparkle size={12} />
                       {aiRolesLoading ? "Thinking…" : "Suggest roles with AI"}
@@ -2533,12 +2787,14 @@ export default function ProjectPage() {
             <div className="shell-view" style={{ display: "flex", flexDirection: "column" }}>
               <VideoCall
                 projectId={id}
+                meetingId={meetingSignal.id}
                 onOpenActivities={() => setTab("activities")}
-                startSignal={meetingStartSignal}
+                startSignal={meetingSignal.ts}
                 preferredMicId={memberProfiles[user?.uid]?.preferences?.micId}
                 preferredCamId={memberProfiles[user?.uid]?.preferences?.camId}
                 joinMicMuted={Boolean(memberProfiles[user?.uid]?.preferences?.micOffOnJoin)}
                 joinCamOff={Boolean(memberProfiles[user?.uid]?.preferences?.camOffOnJoin)}
+                autoRecord={Boolean(memberProfiles[user?.uid]?.preferences?.autoRecordMeetings)}
               />
               <div style={{ display: "flex", flex: 1, minHeight: 0, gap: 16 }}>
               <div className="shell-chat-panel" style={{ flex: 1, minWidth: 0 }}>
@@ -2627,6 +2883,11 @@ export default function ProjectPage() {
                         {canTranslate && (
                           <button type="button" className="shell-msg-action-btn" title="Translate" onClick={() => translateMessage(m)}>
                             <IconTranslate size={13} />
+                          </button>
+                        )}
+                        {m.type === "voice" && !transcriptions[m.id]?.text && (
+                          <button type="button" className="shell-msg-action-btn" title="Transcribe" onClick={() => transcribeMessage(m)}>
+                            <IconTranscript size={13} />
                           </button>
                         )}
                         {/* One-click "Quick-react emoji" (Preferences → Notifications →
@@ -2753,6 +3014,50 @@ export default function ProjectPage() {
 
                         {m.caption && <p style={{ marginTop: 4 }}>{renderMessageText(m.caption)}</p>}
 
+                        {m.type === "meeting" && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start", padding: "10px 12px", background: "var(--s-bg-elevated)", border: "1px solid var(--s-border)", borderRadius: 10, minWidth: 220 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <span style={{ width: 8, height: 8, borderRadius: "50%", background: m.status === "live" ? "#2ea043" : "var(--s-text-3)", flex: "none" }} />
+                              <span style={{ fontSize: 13.5, fontWeight: 600 }}>
+                                {m.status === "live" ? "Meeting in progress" : "Meeting"}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>
+                              Started by {m.startedByName || "Unknown"}
+                              {m.createdAt?.toDate ? ` · ${m.createdAt.toDate().toLocaleString()}` : ""}
+                            </div>
+                            {m.recordingActive && (
+                              <div style={{ fontSize: 11.5, color: "#e5534b", display: "flex", alignItems: "center", gap: 5 }}>
+                                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#e5534b" }} />
+                                Recording — {m.recordingByName}
+                              </div>
+                            )}
+                            {m.status === "live" ? (
+                              <button type="button" className="shell-task-add-btn" style={{ padding: "6px 16px", fontSize: 12.5 }} onClick={() => joinMeeting(m.id)}>
+                                Join meeting
+                              </button>
+                            ) : (
+                              <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>
+                                Ended{m.endedAt?.toDate ? ` · ${m.endedAt.toDate().toLocaleString()}` : ""}
+                              </div>
+                            )}
+                            {(m.recordings || []).map((r, idx) => (
+                              <a
+                                key={idx}
+                                href={r.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="shell-attachment-card"
+                              >
+                                <span className="shell-attachment-badge" style={{ background: "#e5534b" }}>●</span>
+                                <span className="shell-attachment-title">
+                                  Recording by {r.byName}{r.durationSec ? ` (${Math.round(r.durationSec / 60)} min)` : ""}
+                                </span>
+                              </a>
+                            ))}
+                          </div>
+                        )}
+
                         {m.type === "attachment" && (
                           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                             {m.provider === "upload" && m.fileType?.startsWith("image/") && (
@@ -2807,8 +3112,26 @@ export default function ProjectPage() {
                         )}
 
                         {m.type === "voice" && (
-                          <div className="shell-voice-msg">
+                          <div className="shell-voice-msg" style={{ flexDirection: "column", alignItems: "flex-start" }}>
                             <AudioPlayer src={m.url} voice style={{ maxWidth: 260 }} autoPlay={autoPlayVoiceIds.has(m.id)} />
+                            {transcriptions[m.id]?.loading && (
+                              <div style={{ fontSize: 11, color: "var(--s-text-3)", marginTop: 4 }}>Transcribing…</div>
+                            )}
+                            {transcriptions[m.id]?.error && (
+                              <div style={{ fontSize: 11, color: "#e5534b", marginTop: 4 }}>{transcriptions[m.id].error}</div>
+                            )}
+                            {transcriptions[m.id]?.text && (
+                              <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid var(--s-border)", width: "100%" }}>
+                                <p style={{ fontStyle: "italic" }}>{transcriptions[m.id].text}</p>
+                                <button
+                                  type="button"
+                                  onClick={() => dismissTranscription(m.id)}
+                                  style={{ background: "none", border: "none", padding: 0, fontSize: 11, color: "var(--s-text-3)", cursor: "pointer" }}
+                                >
+                                  Hide transcription
+                                </button>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -3076,7 +3399,7 @@ export default function ProjectPage() {
                           <div className="shell-proj-row" onClick={() => { setComposerMode("task"); setComposerMenuOpen(false); }}>
                             Reference a task
                           </div>
-                          <div className="shell-proj-row" onClick={() => { setMeetingStartSignal(Date.now()); setComposerMenuOpen(false); }}>
+                          <div className="shell-proj-row" onClick={() => { startMeeting(); setComposerMenuOpen(false); }}>
                             Start a meeting
                           </div>
                           <div className="shell-proj-row" onClick={() => { sendActivitiesRef(); setComposerMenuOpen(false); }}>
@@ -3218,19 +3541,84 @@ export default function ProjectPage() {
             <div className="shell-view">
               {(() => {
                 const files = messages
-                  .filter((m) => m.type === "attachment" || m.type === "voice")
+                  .filter((m) => m.type === "attachment" || m.type === "voice" || m.type === "meeting")
                   .slice()
                   .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
                 if (files.length === 0) {
                   return (
                     <p style={{ fontSize: 13, color: "var(--s-text-3)" }}>
                       Nothing shared yet. Files and links attached in Team chat show up here automatically.
+                      Meetings show up here too, once started.
                     </p>
                   );
                 }
                 return (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {files.map((m) => (
+                    {files.map((m) => {
+                      // Meetings don't have a single `url`/`title` like a
+                      // normal attachment — they're a chat card that can
+                      // have zero or more recordings hanging off it — so
+                      // they get their own row layout instead of the
+                      // generic one below.
+                      if (m.type === "meeting") {
+                        const recordings = m.recordings || [];
+                        return (
+                          <div
+                            key={m.id}
+                            style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, flexWrap: "wrap" }}
+                          >
+                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: m.status === "live" ? "#2ea043" : "var(--s-text-3)", flex: "none" }} />
+                            <div style={{ flex: 1, minWidth: 140 }}>
+                              <span style={{ color: "var(--s-text)", fontSize: 13.5 }}>
+                                {m.status === "live" ? "Meeting in progress" : "Meeting"}
+                              </span>
+                              <div style={{ fontSize: 11, color: "var(--s-text-3)", marginTop: 2 }}>
+                                Started by {m.startedByName || "Unknown"}
+                                {m.createdAt?.toDate ? ` · ${m.createdAt.toDate().toLocaleDateString()}` : ""}
+                              </div>
+                              {recordings.length > 0 && (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                                  {recordings.map((r, idx) => (
+                                    <a
+                                      key={idx}
+                                      href={r.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="shell-attachment-card"
+                                    >
+                                      <span className="shell-attachment-badge" style={{ background: "#e5534b" }}>●</span>
+                                      <span className="shell-attachment-title">Recorded by {r.byName}</span>
+                                    </a>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            {m.status === "live" && (
+                              <button
+                                type="button"
+                                className="shell-task-add-btn"
+                                style={{ padding: "6px 14px", fontSize: 12 }}
+                                onClick={() => { setTab("chat"); joinMeeting(m.id); }}
+                              >
+                                Join
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="ghost"
+                              onClick={() => {
+                                setChatSearch("");
+                                setJumpToMessageId(m.id);
+                                setTab("chat");
+                              }}
+                              style={{ fontSize: 11.5 }}
+                            >
+                              Jump to chat
+                            </button>
+                          </div>
+                        );
+                      }
+                      return (
                       <div
                         key={m.id}
                         style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10, flexWrap: "wrap" }}
@@ -3277,7 +3665,8 @@ export default function ProjectPage() {
                           Jump to chat
                         </button>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 );
               })()}
@@ -3427,10 +3816,11 @@ export default function ProjectPage() {
                   onChange={(e) => setSettingsBrief(e.target.value)}
                   placeholder="Brief"
                   rows={3}
+                  required
                   className="shell-input"
                   style={{ width: "100%", marginBottom: 10, resize: "vertical", fontFamily: "inherit" }}
                 />
-                <button type="submit" disabled={savingMeta} className="shell-task-add-btn" style={{ padding: "10px 18px" }}>
+                <button type="submit" disabled={savingMeta || !settingsName.trim() || !settingsBrief.trim()} className="shell-task-add-btn" style={{ padding: "10px 18px" }}>
                   {savingMeta ? "Saving…" : "Save changes"}
                 </button>
               </form>
@@ -3468,6 +3858,94 @@ export default function ProjectPage() {
                   </div>
                 ))}
               </div>
+
+              <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
+                Integrations
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                <div className="toggle-row">
+                  <div className="toggle-row-label">
+                    <div className="toggle-row-title">Connect Drive</div>
+                    <div className="toggle-row-hint">
+                      {user?.uid !== project.ownerId
+                        ? project.driveFolderId
+                          ? "Connected — only the project owner can change this."
+                          : "Not connected — only the project owner can change this."
+                        : driveToggleBusy
+                        ? project.driveFolderId
+                          ? "Deleting the Drive folder…"
+                          : "Creating the Drive folder…"
+                        : project.driveFolderId
+                        ? "Turning this off permanently deletes the folder."
+                        : !myIntegrations?.driveAccessToken
+                        ? <>Connect Drive in <Link href="/account" style={{ color: "var(--s-amber)" }}>Preferences</Link> first</>
+                        : `Creates a Drive folder named "${project.name}".`}
+                    </div>
+                  </div>
+                  <Toggle
+                    checked={Boolean(project.driveFolderId)}
+                    onChange={toggleDriveConnection}
+                    disabled={user?.uid !== project.ownerId || driveToggleBusy || (!project.driveFolderId && !myIntegrations?.driveAccessToken)}
+                  />
+                </div>
+
+                <div className="toggle-row">
+                  <div className="toggle-row-label">
+                    <div className="toggle-row-title">Connect GitHub</div>
+                    <div className="toggle-row-hint">
+                      {user?.uid !== project.ownerId
+                        ? project.githubRepoFullName
+                          ? "Connected — only the project owner can change this."
+                          : "Not connected — only the project owner can change this."
+                        : githubToggleBusy
+                        ? project.githubRepoFullName
+                          ? "Deleting the repo…"
+                          : "Creating the repo…"
+                        : project.githubRepoFullName
+                        ? "Turning this off permanently deletes the repo."
+                        : !myIntegrations?.githubAccessToken
+                        ? <>Connect GitHub in <Link href="/account" style={{ color: "var(--s-amber)" }}>Preferences</Link> first</>
+                        : `Creates a private repo named "${slugifyRepoName(project.name)}".`}
+                    </div>
+                  </div>
+                  <Toggle
+                    checked={Boolean(project.githubRepoFullName)}
+                    onChange={toggleGithubConnection}
+                    disabled={user?.uid !== project.ownerId || githubToggleBusy || (!project.githubRepoFullName && !myIntegrations?.githubAccessToken)}
+                  />
+                </div>
+              </div>
+
+              {(project.driveFolderId || project.githubRepoFullName) && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                  {project.driveFolderId && (
+                    <button
+                      type="button"
+                      onClick={() => downloadProjectFiles("drive")}
+                      disabled={downloadBusy !== null}
+                      className="shell-btn-outline"
+                      style={{ fontSize: 12 }}
+                    >
+                      {downloadBusy === "drive" ? "Zipping Drive files…" : "Download Drive files"}
+                    </button>
+                  )}
+                  {project.githubRepoFullName && (
+                    <button
+                      type="button"
+                      onClick={() => downloadProjectFiles("github")}
+                      disabled={downloadBusy !== null}
+                      className="shell-btn-outline"
+                      style={{ fontSize: 12 }}
+                    >
+                      {downloadBusy === "github" ? "Zipping GitHub repo…" : "Download GitHub repo"}
+                    </button>
+                  )}
+                </div>
+              )}
+              {integrationError && (
+                <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 10 }}>{integrationError}</p>
+              )}
+              <div style={{ marginBottom: 32 }} />
 
               <p style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--s-text-3)", marginBottom: 10 }}>
                 Invite teammates

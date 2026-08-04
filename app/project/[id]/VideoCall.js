@@ -11,8 +11,12 @@ import {
   addDoc,
   deleteDoc,
   getDocs,
+  arrayUnion,
+  arrayRemove,
+  serverTimestamp,
 } from "firebase/firestore";
-import { db } from "../../../lib/firebase";
+import { auth, db } from "../../../lib/firebase";
+import { uploadFile } from "../../../lib/storage";
 import { IconSparkle } from "../../components/icons";
 
 const ICE_SERVERS = {
@@ -38,13 +42,21 @@ function ctrlBtnStyle(danger) {
   };
 }
 
-export default function VideoCall({ projectId, onOpenActivities, startSignal, preferredMicId, preferredCamId, joinMicMuted, joinCamOff }) {
+export default function VideoCall({ projectId, meetingId, onOpenActivities, startSignal, preferredMicId, preferredCamId, joinMicMuted, joinCamOff, autoRecord }) {
   const [inCall, setInCall] = useState(false);
   const [status, setStatus] = useState("Not connected");
   const [micOff, setMicOff] = useState(false);
   const [camOff, setCamOff] = useState(false);
   const [micDevices, setMicDevices] = useState([]);
   const [camDevices, setCamDevices] = useState([]);
+  // Local-recording state (see startRecording below) — `recording` is
+  // whether *this* browser is currently capturing; `remoteRecording` is
+  // filled in from the meeting message doc whenever *anyone* (including
+  // this user, via their own write) is recording, so the "Recording…"
+  // indicator shows for every participant, not just whoever hit the button.
+  const [recording, setRecording] = useState(false);
+  const [recordUploading, setRecordUploading] = useState(false);
+  const [remoteRecording, setRemoteRecording] = useState(null); // { by, byName } | null
   // Seeded from the "Voice & Video" preferences page (/account) if set —
   // still just a starting point, the in-call device picker can always
   // override it for this session.
@@ -62,6 +74,13 @@ export default function VideoCall({ projectId, onOpenActivities, startSignal, pr
   const cameraTrackRef = useRef(null); // kept so screen-share can hand the camera track back
   const unsubsRef = useRef([]);
   const callFrameRef = useRef(null);
+  const recorderRef = useRef(null);
+  const recordChunksRef = useRef([]);
+  const recordCanvasRef = useRef(null);
+  const recordRafRef = useRef(null);
+  const recordAudioCtxRef = useRef(null);
+  const recordStartRef = useRef(0);
+  const autoRecordTriedRef = useRef(false); // guards against re-triggering auto-record every re-render while in the same call
 
   const roomId = `call-${projectId}`;
 
@@ -203,6 +222,8 @@ export default function VideoCall({ projectId, onOpenActivities, startSignal, pr
   }
 
   function endCall() {
+    if (recorderRef.current) stopRecording(); // flushes + uploads via the recorder's onstop -> finishRecording
+    autoRecordTriedRef.current = false;
     cleanupListeners();
     if (pcRef.current) {
       pcRef.current.close();
@@ -329,6 +350,131 @@ export default function VideoCall({ projectId, onOpenActivities, startSignal, pr
     if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
   }
 
+  /**
+   * Local recording — there's no server-side SFU here (this is a plain P2P
+   * call), so "recording the meeting" means compositing what's already on
+   * screen (remote video full-frame, local video as a corner picture-in-
+   * picture, both parties' audio mixed together) into one MediaStream via a
+   * hidden canvas + an AudioContext mix bus, and running that through
+   * MediaRecorder — same Blob-to-Storage pattern the voice messages use.
+   */
+  async function startRecording() {
+    if (!meetingId || recording) return;
+    const uid = auth.currentUser?.uid;
+    const name = auth.currentUser?.displayName || auth.currentUser?.email || "Unknown";
+    if (!uid) return;
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 960;
+      canvas.height = 540;
+      recordCanvasRef.current = canvas;
+      const ctx = canvas.getContext("2d");
+      const drawFrame = () => {
+        if (!ctx) return;
+        ctx.fillStyle = "#111";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const remoteVideo = remoteVideoRef.current;
+        const localVideo = localVideoRef.current;
+        if (remoteVideo && remoteVideo.videoWidth) {
+          ctx.drawImage(remoteVideo, 0, 0, canvas.width, canvas.height);
+        }
+        if (localVideo && localVideo.videoWidth) {
+          const pw = canvas.width * 0.22;
+          const ph = canvas.height * 0.22;
+          ctx.drawImage(localVideo, canvas.width - pw - 14, canvas.height - ph - 14, pw, ph);
+        }
+        recordRafRef.current = requestAnimationFrame(drawFrame);
+      };
+      drawFrame();
+
+      const canvasStream = canvas.captureStream(25);
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioCtx();
+      recordAudioCtxRef.current = audioCtx;
+      const dest = audioCtx.createMediaStreamDestination();
+      const localAudioTracks = localStreamRef.current?.getAudioTracks() || [];
+      if (localAudioTracks.length) {
+        audioCtx.createMediaStreamSource(new MediaStream(localAudioTracks)).connect(dest);
+      }
+      const remoteAudioTracks = remoteVideoRef.current?.srcObject?.getAudioTracks?.() || [];
+      if (remoteAudioTracks.length) {
+        audioCtx.createMediaStreamSource(new MediaStream(remoteAudioTracks)).connect(dest);
+      }
+
+      const mixedStream = new MediaStream([...canvasStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+      const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
+        ? "video/webm;codecs=vp8,opus"
+        : "video/webm";
+      const recorder = new MediaRecorder(mixedStream, { mimeType });
+      recordChunksRef.current = [];
+      recordStartRef.current = Date.now();
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recordChunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => finishRecording();
+      recorder.start();
+      recorderRef.current = recorder;
+      setRecording(true);
+
+      const meetingRef = doc(db, "projects", projectId, "messages", meetingId);
+      await updateDoc(meetingRef, { recordingActive: true, recordingBy: uid, recordingByName: name });
+    } catch (err) {
+      console.error("Couldn't start recording:", err);
+      if (recordRafRef.current) cancelAnimationFrame(recordRafRef.current);
+      recordRafRef.current = null;
+      recordAudioCtxRef.current?.close().catch(() => {});
+      recordAudioCtxRef.current = null;
+    }
+  }
+
+  /** Stops the MediaRecorder — the actual upload/save happens in its onstop handler (finishRecording), once the last chunk is flushed. */
+  function stopRecording() {
+    recorderRef.current?.stop();
+    recorderRef.current = null;
+  }
+
+  function toggleRecording() {
+    if (recording) stopRecording();
+    else startRecording();
+  }
+
+  /** Uploads the finished recording and appends it to the meeting message's `recordings` list, attributed to whoever recorded it. */
+  async function finishRecording() {
+    if (recordRafRef.current) cancelAnimationFrame(recordRafRef.current);
+    recordRafRef.current = null;
+    recordAudioCtxRef.current?.close().catch(() => {});
+    recordAudioCtxRef.current = null;
+    const durationSec = Math.round((Date.now() - recordStartRef.current) / 1000);
+    const blob = new Blob(recordChunksRef.current, { type: "video/webm" });
+    recordChunksRef.current = [];
+    setRecording(false);
+
+    const uid = auth.currentUser?.uid;
+    const name = auth.currentUser?.displayName || auth.currentUser?.email || "Unknown";
+    if (!meetingId || !uid) return;
+    const meetingRef = doc(db, "projects", projectId, "messages", meetingId);
+    if (blob.size === 0) {
+      await updateDoc(meetingRef, { recordingActive: false, recordingBy: null, recordingByName: null }).catch(() => {});
+      return;
+    }
+    setRecordUploading(true);
+    try {
+      const path = `projects/${projectId}/meetings/${meetingId}/recording-${Date.now()}.webm`;
+      const url = await uploadFile(path, blob, () => {});
+      await updateDoc(meetingRef, {
+        recordingActive: false,
+        recordingBy: null,
+        recordingByName: null,
+        recordings: arrayUnion({ url, by: uid, byName: name, durationSec, at: Date.now() }),
+      });
+    } catch (err) {
+      console.error("Couldn't upload the recording:", err);
+      await updateDoc(meetingRef, { recordingActive: false, recordingBy: null, recordingByName: null }).catch(() => {});
+    } finally {
+      setRecordUploading(false);
+    }
+  }
+
   function toggleFullscreen() {
     const el = callFrameRef.current;
     if (!el) return;
@@ -361,6 +507,61 @@ export default function VideoCall({ projectId, onOpenActivities, startSignal, pr
     if (startSignal) startCall();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startSignal]);
+
+  // Tracks this user as a participant on the meeting's chat message while
+  // in the call, and marks the meeting "ended" once the last participant
+  // leaves — this is what makes the chat card (and Files) flip from "in
+  // progress" to "Ended" for everyone, not just the person who leaves.
+  useEffect(() => {
+    if (!inCall || !meetingId) return;
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    const meetingRef = doc(db, "projects", projectId, "messages", meetingId);
+    updateDoc(meetingRef, { participantUids: arrayUnion(uid), status: "live" }).catch(() => {});
+    return () => {
+      (async () => {
+        try {
+          await updateDoc(meetingRef, { participantUids: arrayRemove(uid) });
+          const snap = await getDoc(meetingRef);
+          const remaining = snap.data()?.participantUids || [];
+          if (remaining.length === 0) {
+            await updateDoc(meetingRef, { status: "ended", endedAt: serverTimestamp() });
+          }
+        } catch (err) {
+          console.error("Couldn't update meeting participants:", err);
+        }
+      })();
+    };
+  }, [inCall, meetingId, projectId]);
+
+  // Shows the "Recording…" indicator to every participant, not just
+  // whoever's browser is actually capturing (recordingActive/recordingBy
+  // are written by startRecording/finishRecording above).
+  useEffect(() => {
+    if (!inCall || !meetingId) {
+      setRemoteRecording(null);
+      return;
+    }
+    const meetingRef = doc(db, "projects", projectId, "messages", meetingId);
+    const unsub = onSnapshot(meetingRef, (snap) => {
+      const data = snap.data();
+      setRemoteRecording(data?.recordingActive ? { by: data.recordingBy, byName: data.recordingByName } : null);
+    });
+    return () => unsub();
+  }, [inCall, meetingId, projectId]);
+
+  // "Auto-record my meetings" (Preferences → Voice & Video) — starts
+  // recording automatically once the local stream is up. Guarded by
+  // autoRecordTriedRef so it only fires once per call, not on every
+  // re-render while autoRecord stays true.
+  useEffect(() => {
+    if (inCall && meetingId && autoRecord && !autoRecordTriedRef.current) {
+      autoRecordTriedRef.current = true;
+      const t = setTimeout(() => startRecording(), 800);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inCall, meetingId, autoRecord]);
 
   // No meeting in progress and nothing pending — render nothing at all.
   // Starting a meeting now lives in the chat composer's "+" menu ("Start a
@@ -420,8 +621,48 @@ export default function VideoCall({ projectId, onOpenActivities, startSignal, pr
             >
               {status}
             </span>
+            {remoteRecording && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: 10,
+                  right: 10,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  background: "rgba(229,83,75,0.85)",
+                  color: "#fff",
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 11,
+                }}
+              >
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fff" }} />
+                Recording{remoteRecording.by === auth.currentUser?.uid ? "" : ` — ${remoteRecording.byName}`}
+              </span>
+            )}
           </div>
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 14, padding: 12, position: "relative", flexWrap: "wrap", flex: "none" }}>
+            {meetingId && (
+              <button
+                onClick={toggleRecording}
+                style={ctrlBtnStyle(recording)}
+                aria-label={recording ? "Stop recording" : "Record this meeting"}
+                title={recordUploading ? "Saving recording…" : recording ? "Stop recording" : "Record this meeting"}
+                disabled={recordUploading}
+              >
+                {recording ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="12" cy="12" r="7" />
+                  </svg>
+                )}
+              </button>
+            )}
             <button onClick={toggleMic} style={ctrlBtnStyle(micOff)} aria-label="Toggle microphone">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />

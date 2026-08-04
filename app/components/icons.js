@@ -185,6 +185,16 @@ export function IconTranslate({ size = 14 }) {
   );
 }
 
+/** Voice message "Transcribe" action — a plain captions/subtitle glyph (rect + text lines) rather than a hand-traced path, since a slightly-off freehand icon reads worse than a simple, obviously-correct primitive shape at this size. */
+export function IconTranscript({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="M6 9h4M6 13h6M14 9h4M13 13h5" />
+    </svg>
+  );
+}
+
 export function IconReact({ size = 14 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -216,22 +226,24 @@ export function IconLinkedinMark({ size = 15 }) {
 }
 
 export function IconDriveMark({ size = 15 }) {
-  // Bold-outline Drive mark — same real triangle silhouette as before, but
-  // a single thick hollow currentColor stroke instead of a filled brand
-  // gradient, per a direct "the colored one looks bad" request. The small
-  // triangular gap near the top isn't a separate shape — it's just where
-  // this one thick stroke naturally pinches together at the silhouette's
-  // sharp top point. currentColor (not hardcoded white) so it sits quietly
-  // among the rest of this file's monotone icons like every other provider
-  // mark here, instead of being the one always-colored exception.
+  // The real image file the user provided, not a hand-traced recreation —
+  // two SVG attempts at redrawing this got rejected as not matching, so
+  // this renders their actual PNG directly instead of guessing at its
+  // geometry again. Lives at public/drive-mark.png (see SETUP_NOTES.md for
+  // the "how to update this" note) — sandbox limitations meant I couldn't
+  // process/copy the file myself, so it needs to be placed there by hand.
+  // Unlike every other currentColor icon in this file, this one can't
+  // re-tint based on where it's placed (it's a fixed raster image) — same
+  // trade-off the original full-color Drive mark already had before any of
+  // this, so nothing regresses relative to that.
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" fill="none">
-      <path
-        d="M13.36,79.26 L44.64,16.74 Q50,6 55.36,16.74 L86.64,79.26 Q92,90 80,90 L20,90 Q8,90 13.36,79.26 Z"
-        stroke="currentColor"
-        strokeWidth="15"
-        strokeLinejoin="round"
-      />
-    </svg>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/drive-mark.png"
+      alt="Drive"
+      width={size}
+      height={size}
+      style={{ width: size, height: size, objectFit: "contain", display: "inline-block", flex: "none" }}
+    />
   );
 }

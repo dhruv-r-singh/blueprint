@@ -842,6 +842,16 @@ export default function AccountSettingsPage() {
                   </div>
                   <Toggle checked={Boolean(prefs.micOffOnJoin)} onChange={(v) => savePreference({ micOffOnJoin: v })} />
                 </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--s-bg-side)", border: "1px solid var(--s-border)", borderRadius: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 13.5, fontWeight: 600 }}>Auto-record my meetings</div>
+                    <div style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>
+                      Starts recording automatically the moment you join. A "Recording" badge shows for everyone
+                      in the call — this doesn't record silently.
+                    </div>
+                  </div>
+                  <Toggle checked={Boolean(prefs.autoRecordMeetings)} onChange={(v) => savePreference({ autoRecordMeetings: v })} />
+                </div>
               </div>
             </>
           )}

@@ -218,24 +218,6 @@ export default function JoinPage() {
                 Sign in to accept this invite.
               </div>
               {error && <p className="notice">{error}</p>}
-              <button className="shell-auth-btn" onClick={() => handleSignIn("google")} disabled={pending !== null}>
-                {pending === "google" ? "Signing in…" : "Continue with Google"}
-              </button>
-              <button className="shell-auth-btn" onClick={() => handleSignIn("github")} disabled={pending !== null}>
-                {pending === "github" ? "Signing in…" : "Continue with GitHub"}
-              </button>
-              <button className="shell-auth-btn" onClick={() => handleSignIn("microsoft")} disabled={pending !== null}>
-                {pending === "microsoft" ? "Signing in…" : "Continue with Microsoft"}
-              </button>
-              <button className="shell-auth-btn" onClick={handleLinkedInClick} disabled={pending !== null}>
-                {pending === "linkedin" ? "Signing in…" : "Continue with LinkedIn"}
-              </button>
-
-              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0 16px" }}>
-                <div style={{ flex: 1, height: 1, background: "var(--s-border)" }} />
-                <span style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>or</span>
-                <div style={{ flex: 1, height: 1, background: "var(--s-border)" }} />
-              </div>
 
               <form onSubmit={handleEmailAuth} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {authMode === "signup" && (
@@ -300,6 +282,25 @@ export default function JoinPage() {
                 style={{ fontSize: 12.5, marginTop: 12, width: "100%", textAlign: "center" }}
               >
                 {authMode === "signup" ? "Already have an account? Sign in" : "Don't have an account? Sign up"}
+              </button>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0 16px" }}>
+                <div style={{ flex: 1, height: 1, background: "var(--s-border)" }} />
+                <span style={{ fontSize: 11.5, color: "var(--s-text-3)" }}>or</span>
+                <div style={{ flex: 1, height: 1, background: "var(--s-border)" }} />
+              </div>
+
+              <button className="shell-auth-btn" onClick={() => handleSignIn("google")} disabled={pending !== null}>
+                {pending === "google" ? "Signing in…" : "Continue with Google"}
+              </button>
+              <button className="shell-auth-btn" onClick={() => handleSignIn("github")} disabled={pending !== null}>
+                {pending === "github" ? "Signing in…" : "Continue with GitHub"}
+              </button>
+              <button className="shell-auth-btn" onClick={() => handleSignIn("microsoft")} disabled={pending !== null}>
+                {pending === "microsoft" ? "Signing in…" : "Continue with Microsoft"}
+              </button>
+              <button className="shell-auth-btn" onClick={handleLinkedInClick} disabled={pending !== null}>
+                {pending === "linkedin" ? "Signing in…" : "Continue with LinkedIn"}
               </button>
             </>
           )}

@@ -715,7 +715,7 @@ shell) — the web app is completely unchanged.
 
 1. **Google:** add one redirect URI to the *existing* second OAuth Client ID
    (from "Drive/Calendar tokens now refresh themselves" above — same
-   `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`, no new
+   `NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`, no new
    credentials needed). In Google Cloud Console → that Client ID →
    **Authorized redirect URIs → Add URI** →
    `https://<your-domain>/api/auth/google/desktop-callback`.
@@ -924,6 +924,47 @@ up for some account type, the code falls back to matching by email (same
 fallback chain as Google/GitHub), so it should self-correct for anyone
 who's ever signed in with the same email on the web.
 
+## Drive icon — a real image file, not a drawn one
+
+`IconDriveMark` (`app/components/icons.js`) now renders `public/drive-mark.png`
+directly instead of an SVG — after a couple of hand-traced recreations didn't
+match well enough, this just uses the actual file. **One manual step:** save
+your image as `drive-mark.png` (exactly that name) directly into the `public/`
+folder at the repo root (sibling to `favicon.ico`, not inside `app/`) via
+Finder + GitHub upload, same as `icon.ico`/`icon.icns` earlier. Roughly
+square, ideally transparent background, works at both small sizes (11-14px,
+chat attachment badges) and normal size (sidebar link) — a few hundred
+pixels square is plenty, no need for anything huge.
+
+To swap the image later, just re-upload a new `drive-mark.png` to the same
+path — no code change needed, `icons.js` always points at that filename.
+
+## Project Settings: Connect Drive / Connect GitHub toggles
+
+Two switches in a project's Settings tab, under "Integrations" — separate
+from the "create these at project creation" checkboxes that already existed
+on `/create`. Turning one on creates a Drive folder or private GitHub repo
+(same underlying calls `/create` uses) and saves it on the project; turning
+it off **permanently deletes** that folder/repo, after a `window.confirm`
+warning (same pattern as "Delete project" right below it in Settings).
+"Download Drive files" / "Download GitHub repo" buttons show up once
+connected, so someone can grab a local copy first — zipped client-side for
+Drive (no server involved), a direct zip download for GitHub. Owner-only;
+everyone else sees a read-only "Connected"/"Not connected" line instead of
+a working toggle, since the folder/repo is created and deleted using the
+owner's own Drive/GitHub connection specifically (Google/GitHub only let
+the actual owning account delete something, not just any connected account).
+
+**One real setup step:** GitHub gates repo *deletion* behind a `delete_repo`
+OAuth scope that's separate from the plain `repo` scope this app already
+requested for everything else (creating repos, inviting collaborators,
+etc.) — added in `lib/firebase.js`. Anyone who connected GitHub *before*
+this shipped will hit a clear "reconnect GitHub" error the first time they
+try to turn the GitHub toggle off, until they reconnect from Preferences →
+Connected accounts (Refresh/Reconnect GitHub) to re-grant access with the
+new scope. No Firebase console changes needed — this is just an extra
+scope on the existing GitHub OAuth connection, not a new provider.
+
 ## Mobile responsiveness
 
 The app had essentially one media query total before this — everything
@@ -1012,3 +1053,42 @@ longer shows a button to download the very app you're already running.
 Gated in `app/page.js` on the same `isDesktopApp()` check everything else
 in the desktop OAuth rework uses (`lib/desktopAuth.js`), so it needs no new
 setup — it just takes effect on the next deploy.
+
+## Meetings now persist as files, and can be recorded
+
+"Start a meeting" (chat composer's "+" menu) now posts a real chat message
+(`type: "meeting"`) instead of just opening the call UI — that message *is*
+the joinable button everyone sees, carries the start date/time and who
+started it, and sticks around after the call ends, same as any other
+attachment. It shows up in the **Files** tab automatically (Files already
+listed attachments/voice messages the same way — meetings just joined that
+list), so "where did that meeting go" now has an answer: it's a file.
+
+- Click the meeting card (in chat or Files) → **Join meeting**. Whoever's in
+  the call gets tracked on that same message (`participantUids`); once the
+  last person leaves, it flips from "Meeting in progress" to "Ended".
+- Anyone in the call can hit the new record button (red circle, next to
+  mute/camera) to start/stop recording. There's no server-side call
+  infrastructure here (it's a plain peer-to-peer WebRTC call, see
+  `project/[id]/VideoCall.js`), so recording works by compositing what's
+  already on screen — remote video full-frame, your own video as a small
+  corner picture-in-picture, both sides' audio mixed together — onto a
+  hidden canvas and running that through `MediaRecorder`, then uploading the
+  result the same way voice messages already upload (`lib/storage.js`).
+- A red **"Recording"** badge shows in the call for *everyone*, not just
+  whoever hit the button — recording someone without any indicator felt
+  wrong to ship, even for a feature you're building for your own use.
+- Once stopped, the recording uploads and appears as a "Recording by
+  {name}" link on the meeting's card, in both chat and Files, with a direct
+  download link. Multiple people can record the same meeting — each
+  recording shows up separately, attributed to whoever made it.
+- **Auto-record**: Preferences → Voice & Video → **"Auto-record my
+  meetings"**. When on, recording starts automatically ~1 second after you
+  join any meeting (giving the camera/mic a moment to warm up) — the same
+  "Recording" badge shows for everyone the moment it kicks in, so this
+  can't record anyone silently.
+
+No new setup needed — this reuses the exact same Firestore collection
+(`projects/{id}/messages`) and Storage path pattern
+(`projects/{id}/**`) as everything else in chat, both of which your
+existing rules already cover.

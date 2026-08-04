@@ -19,11 +19,17 @@ export async function POST(request) {
   const { code } = await request.json().catch(() => ({}));
   if (!code) return NextResponse.json({ error: "Missing authorization code." }, { status: 400 });
 
-  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  // Same Client ID as everywhere else in the app (desktop sign-in, the
+  // client-side code client in lib/integrations.js) — there's only ever one
+  // "second OAuth client" (see SETUP_NOTES.md), so this reads the same
+  // NEXT_PUBLIC_-prefixed env var rather than a separate undocumented name.
+  // It's safe to read a NEXT_PUBLIC_ var server-side too; the prefix only
+  // controls whether it's *also* inlined into client bundles.
+  const clientId = process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
     return NextResponse.json(
-      { error: "Google OAuth isn't configured on the server yet (missing GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET)." },
+      { error: "Google OAuth isn't configured on the server yet (missing NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET)." },
       { status: 500 }
     );
   }

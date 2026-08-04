@@ -62,6 +62,10 @@ export default function CreateProjectPage() {
       setError("Give your project a name.");
       return;
     }
+    if (!brief.trim()) {
+      setError("Give your project a brief — it's what the AI uses to suggest roles.");
+      return;
+    }
     setSaving(true);
     setError("");
     const trimmedName = name.trim();
@@ -238,8 +242,9 @@ export default function CreateProjectPage() {
           <textarea
             value={brief}
             onChange={(e) => setBrief(e.target.value)}
-            placeholder="What is this project? (optional)"
+            placeholder="What is this project? A few sentences is enough — the AI uses this to suggest roles."
             rows={3}
+            required
             className="shell-input"
             style={{ width: "100%", marginBottom: 16, resize: "vertical", fontFamily: "inherit" }}
           />

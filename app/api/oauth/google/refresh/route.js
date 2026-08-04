@@ -23,11 +23,13 @@ export async function POST(request) {
     );
   }
 
-  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  // Same Client ID as everywhere else in the app — see the matching comment
+  // in ../exchange/route.js.
+  const clientId = process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
     return NextResponse.json(
-      { error: "Google OAuth isn't configured on the server yet (missing GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET)." },
+      { error: "Google OAuth isn't configured on the server yet (missing NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET)." },
       { status: 500 }
     );
   }
