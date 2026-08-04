@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import crypto from "crypto";
 import { requireUid } from "../../../../../lib/firebaseAdmin";
+import { GOOGLE_DESKTOP_SCOPE } from "../../../../../lib/oauthScopes";
 
 // "Connect"/"Refresh Drive access" from Preferences, when running in the
 // desktop shell — see ../desktop-start/route.js for why this can't be the
@@ -33,13 +34,7 @@ export async function POST(request) {
     state,
     access_type: "offline",
     prompt: "consent",
-    scope: [
-      "openid",
-      "email",
-      "profile",
-      "https://www.googleapis.com/auth/drive.file",
-      "https://www.googleapis.com/auth/calendar.events",
-    ].join(" "),
+    scope: GOOGLE_DESKTOP_SCOPE,
   });
 
   return NextResponse.json({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}` });

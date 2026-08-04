@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import crypto from "crypto";
+import { GOOGLE_DESKTOP_SCOPE } from "../../../../../lib/oauthScopes";
 
 // Kicks off Google sign-in for the Electron desktop shell via the system's
 // real browser — NOT an embedded Electron window. The old approach loaded
@@ -37,13 +38,7 @@ export async function GET(request) {
     state,
     access_type: "offline",
     prompt: "consent",
-    scope: [
-      "openid",
-      "email",
-      "profile",
-      "https://www.googleapis.com/auth/drive.file",
-      "https://www.googleapis.com/auth/calendar.events",
-    ].join(" "),
+    scope: GOOGLE_DESKTOP_SCOPE,
   });
 
   return NextResponse.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);

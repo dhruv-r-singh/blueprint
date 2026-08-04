@@ -42,6 +42,8 @@ import {
   listDriveFolderFiles,
   downloadDriveFile,
   slugifyRepoName,
+  hasGithubScope,
+  reconnectGithub,
 } from "../../../lib/integrations";
 import { uploadFile, deleteFile, safeFileName, compressImage } from "../../../lib/storage";
 import { aiComplete, aiCompleteJSON } from "../../../lib/ai";
@@ -50,6 +52,7 @@ import TopNav from "../../components/TopNav";
 import CADViewer, { guessCadKind } from "../../components/CADViewer";
 import GuidedTour from "../../components/GuidedTour";
 import MessageRequestModal from "../../components/MessageRequestModal";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import VideoPlayer from "../../components/VideoPlayer";
 import AudioPlayer from "../../components/AudioPlayer";
 import Toggle from "../../components/Toggle";
@@ -265,6 +268,10 @@ export default function ProjectPage() {
   const [driveToggleBusy, setDriveToggleBusy] = useState(false);
   const [githubToggleBusy, setGithubToggleBusy] = useState(false);
   const [integrationError, setIntegrationError] = useState("");
+  const [githubNeedsReconnect, setGithubNeedsReconnect] = useState(false);
+  const [githubReconnectBusy, setGithubReconnectBusy] = useState(false);
+  const [githubReconnectPending, setGithubReconnectPending] = useState(false); // desktop only — waiting on the system-browser handoff
+  const [integrationNotice, setIntegrationNotice] = useState("");
   // null | "drive" | "github" — which "Download files" button (if either)
   // is currently zipping/fetching, so both can show their own busy state
   // without a second click starting a duplicate download mid-flight.
@@ -319,9 +326,26 @@ export default function ProjectPage() {
   const drawingRef = useRef(false);
   const currentPointsRef = useRef([]);
   const [viewingCad, setViewingCad] = useState(null); // { url, kind } | null
+  const [viewingRecording, setViewingRecording] = useState(null); // { meetingId, recording } | null
+  const [confirmDialog, setConfirmDialog] = useState(null); // { message, danger, confirmLabel, resolve } | null
+
+  /** Promise-based stand-in for window.confirm() that renders as an in-app panel (ConfirmDialog) instead of the browser's own dialog chrome. Resolves true/false the same way window.confirm() would return it. */
+  function askConfirm(message, opts = {}) {
+    return new Promise((resolve) => {
+      setConfirmDialog({ message, danger: opts.danger !== false, confirmLabel: opts.confirmLabel || "Confirm", resolve });
+    });
+  }
   const [memberProfiles, setMemberProfiles] = useState({}); // uid -> profile doc data
   const [translations, setTranslations] = useState({}); // messageId -> { text, loading, error, lang, sameLanguage }
   const [transcriptions, setTranscriptions] = useState({}); // messageId -> { text, loading, error }
+  // Meeting-recording chapters (AI, YouTube-style) — keyed by `${meetingId}:${recording.at}`
+  // since a single meeting can have more than one recording. The finished
+  // `chapters` array itself is persisted onto the recording in Firestore
+  // (see generateChapters below), so this state is just loading/error UI —
+  // no need to also hold the result once it lands, that comes back through
+  // the normal `messages` snapshot like everything else.
+  const [chapterState, setChapterState] = useState({}); // key -> { loading, error }
+  const [chapterSeek, setChapterSeek] = useState({}); // key -> { time, ts } — drives VideoPlayer's seekSignal
   const [presenceTick, setPresenceTick] = useState(0); // bumps periodically so online/offline labels stay fresh
   const [replyingTo, setReplyingTo] = useState(null); // { id, senderName, text } | null
   const [chatSearch, setChatSearch] = useState("");
@@ -783,12 +807,13 @@ export default function ProjectPage() {
     return () => unsub();
   }, [user]);
 
-  // If this project has a GitHub repo and *I'm* the owner (the only one
-  // whose browser legitimately holds the token that can grant repo access),
-  // invite any member who's joined since the last time I had this page
-  // open and has connected their own GitHub account. Not instant — it runs
-  // whenever the owner is viewing the project — but needs no server
-  // component, since only the owner's own client ever touches their token.
+  // If this project has a GitHub repo and the current viewer is the owner
+  // (the only one whose browser legitimately holds the token that can
+  // grant repo access), invite any member who's joined since the owner
+  // last had this page open and has connected their own GitHub account.
+  // Not instant — it runs whenever the owner is viewing the project — but
+  // needs no server component, since only the owner's own client ever
+  // touches their token.
   const reconcilingRef = useRef(false);
   useEffect(() => {
     if (!project || !user || user.uid !== project.ownerId) return;
@@ -960,6 +985,14 @@ export default function ProjectPage() {
     return "Link";
   }
 
+  /** "1m 30s" / "45s" — used for meeting recording lengths (was previously rounding to whole minutes only, which made anything under a minute show as "0 min"). */
+  function formatDuration(totalSeconds) {
+    const s = Math.max(0, Math.round(totalSeconds || 0));
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return m === 0 ? `${sec}s` : `${m}m ${sec}s`;
+  }
+
   /** Formats a message's Firestore Timestamp per the "24-hour clock" preference (Preferences → Appearance → Chat display). */
   function formatMsgTime(ts) {
     if (!ts?.toDate) return "";
@@ -1051,6 +1084,35 @@ export default function ProjectPage() {
   /** Joins an existing meeting message (clicked from its chat card, or from Files) — same call room, just doesn't create a new message. */
   function joinMeeting(meetingId) {
     setMeetingSignal({ id: meetingId, ts: Date.now() });
+  }
+
+  /** AI (Gemini, via /api/meeting-chapters) watches a meeting recording and returns YouTube-style chapter markers, persisted onto that recording's entry in the meeting message so it never needs regenerating. */
+  async function generateChapters(meetingId, recording) {
+    const key = `${meetingId}:${recording.at}`;
+    setChapterState((prev) => ({ ...prev, [key]: { loading: true, error: "" } }));
+    try {
+      const res = await fetch("/api/meeting-chapters", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: recording.url }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Couldn't generate chapters.");
+      const msg = messages.find((m) => m.id === meetingId);
+      const updatedRecordings = (msg?.recordings || []).map((r) =>
+        r.at === recording.at ? { ...r, chapters: data.chapters } : r
+      );
+      await updateDoc(doc(db, "projects", id, "messages", meetingId), { recordings: updatedRecordings });
+      setChapterState((prev) => ({ ...prev, [key]: { loading: false, error: "" } }));
+    } catch (err) {
+      setChapterState((prev) => ({ ...prev, [key]: { loading: false, error: err.message || "Couldn't generate chapters." } }));
+    }
+  }
+
+  /** Clicking a chapter jumps the matching recording's embedded player to that timestamp. */
+  function seekToChapter(meetingId, recording, seconds) {
+    const key = `${meetingId}:${recording.at}`;
+    setChapterSeek((prev) => ({ ...prev, [key]: { time: seconds, ts: Date.now() } }));
   }
 
   function startReply(m) {
@@ -1342,7 +1404,7 @@ export default function ProjectPage() {
   async function deleteMessage(message) {
     if (!user || message.senderId !== user.uid) return;
     const shouldConfirm = memberProfiles[user.uid]?.preferences?.confirmMessageDelete !== false;
-    if (shouldConfirm && !window.confirm("Delete this message? This can't be undone.")) return;
+    if (shouldConfirm && !(await askConfirm("Delete this message? This can't be undone."))) return;
     try {
       await deleteDoc(doc(db, "projects", id, "messages", message.id));
     } catch (err) {
@@ -1721,7 +1783,7 @@ export default function ProjectPage() {
 
   async function leaveProject() {
     if (!user) return;
-    if (!window.confirm("Leave this project? You'll need a new invite to get back in.")) return;
+    if (!(await askConfirm("Leave this project? You'll need a new invite to get back in."))) return;
     setLeaving(true);
     try {
       await updateDoc(doc(db, "projects", id), { memberIds: arrayRemove(user.uid) });
@@ -1742,7 +1804,7 @@ export default function ProjectPage() {
    */
   async function deleteProject() {
     if (!user || !project || user.uid !== project.ownerId) return;
-    if (!window.confirm(`Permanently delete "${project.name}"? This deletes every task, message, and file reference in it. There's no undo.`)) return;
+    if (!(await askConfirm(`Permanently delete "${project.name}"? This deletes every task, message, and file reference in it. There's no undo.`))) return;
     setDeletingProject(true);
     try {
       const subcollections = ["tasks", "messages", "events", "whiteboard", "retro"];
@@ -1762,7 +1824,7 @@ export default function ProjectPage() {
    * Turns the "Connect Drive" toggle in Settings on/off. On: creates a real
    * Drive folder (the same call project creation itself uses) and saves its
    * id/url on the project doc. Off: permanently deletes that folder after a
-   * clear warning — same window.confirm pattern as "Delete project" above,
+   * clear warning — same askConfirm pattern as "Delete project" above,
    * since there's no undo once it's gone. Owner-only (enforced here and in
    * the JSX that renders the toggle), since the folder is created/deleted
    * using the CALLER's own Drive connection — only the account that
@@ -1792,9 +1854,9 @@ export default function ProjectPage() {
 
     if (!project.driveFolderId) return;
     if (
-      !window.confirm(
+      !(await askConfirm(
         `Disconnect Drive from "${project.name}"? This PERMANENTLY DELETES the Drive folder and everything in it — download the files first if you want to keep them. There's no undo.`
-      )
+      ))
     ) {
       return;
     }
@@ -1815,6 +1877,7 @@ export default function ProjectPage() {
   async function toggleGithubConnection(next) {
     if (!user || !project || user.uid !== project.ownerId) return;
     setIntegrationError("");
+    setIntegrationNotice("");
     if (next) {
       if (!myIntegrations?.githubAccessToken) {
         setIntegrationError("Connect GitHub in Preferences first, then try this toggle again.");
@@ -1834,10 +1897,19 @@ export default function ProjectPage() {
     }
 
     if (!project.githubRepoFullName) return;
+    // Checked proactively (see hasGithubScope in lib/integrations.js)
+    // rather than only finding out from a failed delete call — an old
+    // connection made before this app requested delete_repo won't have it,
+    // and no amount of retrying the delete itself will ever fix that.
+    if (!hasGithubScope(myIntegrations, "delete_repo")) {
+      setGithubNeedsReconnect(true);
+      setIntegrationError("Your GitHub connection is missing repo-deletion permission — click \"Reconnect GitHub\" below, then try turning this off again.");
+      return;
+    }
     if (
-      !window.confirm(
+      !(await askConfirm(
         `Disconnect GitHub from "${project.name}"? This PERMANENTLY DELETES the ${project.githubRepoFullName} repo and everything in it — download the files first if you want to keep them. There's no undo.`
-      )
+      ))
     ) {
       return;
     }
@@ -1845,11 +1917,48 @@ export default function ProjectPage() {
     try {
       await deleteGithubRepo(myIntegrations.githubAccessToken, project.githubRepoFullName);
       await updateDoc(doc(db, "projects", id), { githubRepoUrl: deleteField(), githubRepoFullName: deleteField() });
+      setGithubNeedsReconnect(false);
     } catch (err) {
       console.error("GitHub repo deletion failed:", err);
-      setIntegrationError(err.message || "Couldn't delete the GitHub repo. " + (err.message?.includes("reconnect") ? "" : "If this keeps happening, reconnect GitHub in Preferences."));
+      setGithubNeedsReconnect(Boolean(err.missingGithubScope));
+      setIntegrationError(
+        err.missingGithubScope
+          ? `${err.message} Click "Reconnect GitHub" below, then try again.`
+          : err.message || "Couldn't delete the GitHub repo."
+      );
     } finally {
       setGithubToggleBusy(false);
+    }
+  }
+
+  /**
+   * The one-click fix for githubNeedsReconnect — re-runs GitHub OAuth right
+   * from Settings instead of sending the owner off to go find Preferences.
+   * On web this resolves immediately and the "Reconnect GitHub" button
+   * disappears on success, ready to retry the toggle. On desktop it opens
+   * the system browser and can't complete in this tab — see
+   * reconnectGithub()'s doc comment in lib/integrations.js for why.
+   */
+  async function handleReconnectGithub() {
+    setIntegrationError("");
+    setIntegrationNotice("");
+    setGithubReconnectBusy(true);
+    try {
+      const result = await reconnectGithub();
+      if (result.pending) {
+        setGithubReconnectPending(true);
+      } else if (result.granted) {
+        setGithubNeedsReconnect(false);
+        setGithubReconnectPending(false);
+        setIntegrationNotice("GitHub reconnected — try turning the toggle off again.");
+      } else {
+        setIntegrationError("GitHub didn't grant repo access — try again and allow it.");
+      }
+    } catch (err) {
+      console.error("GitHub reconnect failed:", err);
+      setIntegrationError(err.message || "Couldn't reconnect GitHub.");
+    } finally {
+      setGithubReconnectBusy(false);
     }
   }
 
@@ -3041,20 +3150,52 @@ export default function ProjectPage() {
                                 Ended{m.endedAt?.toDate ? ` · ${m.endedAt.toDate().toLocaleString()}` : ""}
                               </div>
                             )}
-                            {(m.recordings || []).map((r, idx) => (
-                              <a
-                                key={idx}
-                                href={r.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="shell-attachment-card"
-                              >
-                                <span className="shell-attachment-badge" style={{ background: "#e5534b" }}>●</span>
-                                <span className="shell-attachment-title">
-                                  Recording by {r.byName}{r.durationSec ? ` (${Math.round(r.durationSec / 60)} min)` : ""}
-                                </span>
-                              </a>
-                            ))}
+                            {(m.recordings || []).map((r, idx) => {
+                              const key = `${m.id}:${r.at}`;
+                              const cs = chapterState[key];
+                              return (
+                                <div key={idx} style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                    <span className="shell-attachment-badge" style={{ background: "#e5534b" }}>●</span>
+                                    <span className="shell-attachment-title">
+                                      Recording by {r.byName}{r.durationSec ? ` (${formatDuration(r.durationSec)})` : ""}
+                                    </span>
+                                  </div>
+                                  <VideoPlayer src={r.url} style={{ width: 320, maxWidth: 360 }} seekSignal={chapterSeek[key]} />
+                                  {r.chapters?.length > 0 ? (
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 2, width: "100%", maxWidth: 320 }}>
+                                      <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--s-text-3)", marginTop: 2 }}>
+                                        Chapters
+                                      </div>
+                                      {r.chapters.map((c, ci) => (
+                                        <button
+                                          key={ci}
+                                          type="button"
+                                          onClick={() => seekToChapter(m.id, r, c.seconds || 0)}
+                                          style={{ display: "flex", gap: 8, background: "none", border: "none", padding: "3px 0", cursor: "pointer", textAlign: "left", color: "var(--s-text)", fontSize: 12 }}
+                                        >
+                                          <span style={{ color: "var(--s-text-3)", fontVariantNumeric: "tabular-nums", flex: "none" }}>{c.time}</span>
+                                          <span>{c.title}</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div>
+                                      <button
+                                        type="button"
+                                        className="ghost"
+                                        disabled={cs?.loading}
+                                        onClick={() => generateChapters(m.id, r)}
+                                        style={{ border: "1px solid var(--s-border)", borderRadius: 7, padding: "5px 10px", fontSize: 11.5 }}
+                                      >
+                                        {cs?.loading ? "Watching recording…" : "Generate chapters with AI"}
+                                      </button>
+                                      {cs?.error && <div style={{ fontSize: 11, color: "#e5534b", marginTop: 4 }}>{cs.error}</div>}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
 
@@ -3579,16 +3720,19 @@ export default function ProjectPage() {
                               {recordings.length > 0 && (
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
                                   {recordings.map((r, idx) => (
-                                    <a
+                                    <button
                                       key={idx}
-                                      href={r.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
+                                      type="button"
+                                      onClick={() => setViewingRecording({ meetingId: m.id, recording: r })}
                                       className="shell-attachment-card"
+                                      style={{ fontFamily: "inherit", cursor: "pointer" }}
                                     >
                                       <span className="shell-attachment-badge" style={{ background: "#e5534b" }}>●</span>
-                                      <span className="shell-attachment-title">Recorded by {r.byName}</span>
-                                    </a>
+                                      <span className="shell-attachment-title">
+                                        Recorded by {r.byName}{r.durationSec ? ` (${formatDuration(r.durationSec)})` : ""}
+                                        {r.chapters?.length ? ` · ${r.chapters.length} chapters` : ""}
+                                      </span>
+                                    </button>
                                   ))}
                                 </div>
                               )}
@@ -3943,7 +4087,29 @@ export default function ProjectPage() {
                 </div>
               )}
               {integrationError && (
-                <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 10 }}>{integrationError}</p>
+                <p style={{ fontSize: 12, color: "#e5534b", marginBottom: 6 }}>{integrationError}</p>
+              )}
+              {integrationNotice && (
+                <p style={{ fontSize: 12, color: "var(--s-green)", marginBottom: 6 }}>{integrationNotice}</p>
+              )}
+              {githubNeedsReconnect && (
+                <div style={{ marginBottom: 10 }}>
+                  {githubReconnectPending ? (
+                    <p style={{ fontSize: 12, color: "var(--s-text-3)" }}>
+                      Check the browser window that just opened to finish reconnecting GitHub, then come back here and try again.
+                    </p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleReconnectGithub}
+                      disabled={githubReconnectBusy}
+                      className="shell-btn-outline"
+                      style={{ fontSize: 12 }}
+                    >
+                      {githubReconnectBusy ? "Reconnecting…" : "Reconnect GitHub"}
+                    </button>
+                  )}
+                </div>
               )}
               <div style={{ marginBottom: 32 }} />
 
@@ -4009,6 +4175,80 @@ export default function ProjectPage() {
 
       {viewingCad && (
         <CADViewer url={viewingCad.url} kind={viewingCad.kind} onClose={() => setViewingCad(null)} />
+      )}
+
+      {viewingRecording && (() => {
+        // Reads live from `messages` (rather than the snapshot captured
+        // when the panel was opened) so chapters generated while this is
+        // open show up without having to close and reopen it.
+        const liveMeeting = messages.find((m) => m.id === viewingRecording.meetingId);
+        const liveRecording =
+          liveMeeting?.recordings?.find((r) => r.at === viewingRecording.recording.at) || viewingRecording.recording;
+        const key = `${viewingRecording.meetingId}:${liveRecording.at}`;
+        const cs = chapterState[key];
+        return (
+          <div
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+            onClick={() => setViewingRecording(null)}
+          >
+            <div className="shell-card" style={{ width: "min(480px, 100%)", padding: 20, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 14.5 }}>
+                  Recording by {liveRecording.byName}
+                  {liveRecording.durationSec ? ` · ${formatDuration(liveRecording.durationSec)}` : ""}
+                </div>
+                <button type="button" onClick={() => setViewingRecording(null)} className="ghost" aria-label="Close" style={{ fontSize: 18, padding: "0 6px" }}>
+                  ×
+                </button>
+              </div>
+              <VideoPlayer src={liveRecording.url} style={{ width: "100%", maxWidth: "100%" }} seekSignal={chapterSeek[key]} />
+              {liveRecording.chapters?.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 12 }}>
+                  <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--s-text-3)" }}>
+                    Chapters
+                  </div>
+                  {liveRecording.chapters.map((c, ci) => (
+                    <button
+                      key={ci}
+                      type="button"
+                      onClick={() => seekToChapter(viewingRecording.meetingId, liveRecording, c.seconds || 0)}
+                      style={{ display: "flex", gap: 8, background: "none", border: "none", padding: "4px 0", cursor: "pointer", textAlign: "left", color: "var(--s-text)", fontSize: 12.5 }}
+                    >
+                      <span style={{ color: "var(--s-text-3)", fontVariantNumeric: "tabular-nums", flex: "none" }}>{c.time}</span>
+                      <span>{c.title}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={cs?.loading}
+                    onClick={() => generateChapters(viewingRecording.meetingId, liveRecording)}
+                    style={{ border: "1px solid var(--s-border)", borderRadius: 7, padding: "6px 12px", fontSize: 12 }}
+                  >
+                    {cs?.loading ? "Watching recording…" : "Generate chapters with AI"}
+                  </button>
+                  {cs?.error && <div style={{ fontSize: 11, color: "#e5534b", marginTop: 6 }}>{cs.error}</div>}
+                </div>
+              )}
+              <a href={liveRecording.url} download style={{ display: "inline-block", marginTop: 14, fontSize: 11.5, color: "var(--s-text-3)" }}>
+                Download original file
+              </a>
+            </div>
+          </div>
+        );
+      })()}
+
+      {confirmDialog && (
+        <ConfirmDialog
+          message={confirmDialog.message}
+          danger={confirmDialog.danger}
+          confirmLabel={confirmDialog.confirmLabel}
+          onConfirm={() => { confirmDialog.resolve(true); setConfirmDialog(null); }}
+          onCancel={() => { confirmDialog.resolve(false); setConfirmDialog(null); }}
+        />
       )}
 
       {showTour && <GuidedTour steps={TOUR_STEPS} onDone={finishTour} />}

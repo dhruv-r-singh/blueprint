@@ -1,11 +1,10 @@
 "use client";
 
 // In-app 3D viewer for CAD exports (STL / OBJ / GLTF / GLB / 3MF / FBX /
-// STEP / STP) attached to a project chat. There's no npm access to this
-// repo's package.json from this session, so instead of adding three.js (and
-// its STEP-import dependency) as a real dependency, this loads the same UMD
-// builds straight from jsdelivr (which mirrors each npm package's files
-// 1:1) — no bundler config needed, works in any client component.
+// STEP / STP) attached to a project chat. Rather than adding three.js (and
+// its STEP-import dependency) as a bundled dependency, this loads the same
+// UMD builds straight from jsdelivr (which mirrors each npm package's
+// files 1:1) — no bundler config needed, works in any client component.
 //
 // STEP/STP is the odd one out: browsers can't parse it natively, and
 // three.js has no STEP loader at all (it's a full CAD boundary-representation

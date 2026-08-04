@@ -23,6 +23,7 @@ import { useAuthGate } from "../../lib/useAuthGate";
 import { qrCodeUrl } from "../../lib/inviteCode";
 import { IconPhone, IconLock } from "../components/icons";
 import ColorPicker from "../components/ColorPicker";
+import ConfirmDialog from "../components/ConfirmDialog";
 import {
   enrolledFactors,
   startPhoneEnrollment,
@@ -122,6 +123,14 @@ export default function AccountSettingsPage() {
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [disablingAccount, setDisablingAccount] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState(null); // { message, danger, confirmLabel, resolve } | null
+
+  /** Promise-based stand-in for window.confirm() — see components/ConfirmDialog.js. */
+  function askConfirm(message, opts = {}) {
+    return new Promise((resolve) => {
+      setConfirmDialog({ message, danger: opts.danger !== false, confirmLabel: opts.confirmLabel || "Confirm", resolve });
+    });
+  }
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -453,7 +462,11 @@ export default function AccountSettingsPage() {
 
   async function handleDisableAccount() {
     if (!user) return;
-    if (!window.confirm("Disable your account? You'll be signed out immediately and won't be able to use Blueprint until you reactivate. Nothing is deleted, and you can undo this any time by signing back in.")) {
+    if (
+      !(await askConfirm(
+        "Disable your account? You'll be signed out immediately and won't be able to use Blueprint until you reactivate. Nothing is deleted, and you can undo this any time by signing back in."
+      ))
+    ) {
       return;
     }
     setDisablingAccount(true);
@@ -1184,6 +1197,15 @@ export default function AccountSettingsPage() {
           )}
         </div>
       </div>
+      {confirmDialog && (
+        <ConfirmDialog
+          message={confirmDialog.message}
+          danger={confirmDialog.danger}
+          confirmLabel={confirmDialog.confirmLabel}
+          onConfirm={() => { confirmDialog.resolve(true); setConfirmDialog(null); }}
+          onCancel={() => { confirmDialog.resolve(false); setConfirmDialog(null); }}
+        />
+      )}
     </div>
   );
 }

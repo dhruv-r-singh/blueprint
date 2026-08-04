@@ -1,16 +1,12 @@
 "use client";
 
-// Lightweight canvas particle field for the intro page's background —
-// inspired by reactbits.dev's "Particles" background component, but
-// reimplemented in plain <canvas> + requestAnimationFrame instead of their
-// actual OGL/WebGL-based one. Reason: their component ships as source you
-// drop into a project and depends on the `ogl` package, which isn't in
-// this app's dependencies — and given how much friction adding even one
-// new npm package has been for this repo's GitHub-web-upload workflow,
-// this trades a little visual fidelity (no true 3D depth/glow) for zero
-// new dependencies. Same parameters as requested where they map 1:1:
-// particleCount, speed, disableRotation (points have no orientation here,
-// so trivially true), moveParticlesOnHover (off — no mouse tracking).
+// Lightweight canvas particle field for the intro page's background,
+// implemented in plain <canvas> + requestAnimationFrame rather than a
+// WebGL library, to avoid adding a new rendering dependency for a purely
+// decorative effect. Trades a little visual fidelity (no true 3D
+// depth/glow) for zero new dependencies. Configurable via particleCount,
+// speed, disableRotation (points have no orientation here, so trivially
+// true), and moveParticlesOnHover (off by default — no mouse tracking).
 import { useEffect, useRef } from "react";
 
 export default function ParticlesBackground({

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import crypto from "crypto";
+import { GITHUB_DESKTOP_SCOPE } from "../../../../../lib/oauthScopes";
 
 // Kicks off GitHub sign-in for the Electron desktop shell via the system's
 // real browser — see app/api/auth/google/desktop-start/route.js for the
@@ -28,7 +29,7 @@ export async function GET(request) {
     client_id: process.env.GITHUB_DESKTOP_CLIENT_ID || "",
     redirect_uri: redirectUri,
     state,
-    scope: "repo read:user user:email",
+    scope: GITHUB_DESKTOP_SCOPE,
   });
 
   return NextResponse.redirect(`https://github.com/login/oauth/authorize?${params.toString()}`);

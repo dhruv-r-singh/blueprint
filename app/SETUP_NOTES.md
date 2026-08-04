@@ -1,7 +1,7 @@
 # Setup notes
 
-Your original `README.md` isn't in a folder I have write access to this
-session, so these notes live here instead — fold them into the README
+Configuration, environment variables, and Firebase/Google Cloud console
+steps needed for each feature below. Fold this into the main README
 whenever convenient.
 
 ## Firebase Storage rules (project images, chat attachments, voice notes, profile pictures)
@@ -165,14 +165,13 @@ calls will fail with a permission error, surfaced in the UI).
 
 ### Drive/Calendar tokens now refresh themselves — three more setup steps
 
-The Google popup Firebase's own client SDK does never hands back a refresh
+The Google popup Firebase's own client SDK never hands back a refresh
 token, so a Drive/Calendar connection made *only* that way is only good for
 about an hour, and previously just failed with "permission-denied" once it
 lapsed (with no way to silently recover — this is the bug behind the
 "Refreshing Google failed" error). That's fixed now with a real
-refresh-token flow, but it needs three things you'll have to set up by hand
-— I don't have access to your Google Cloud console, Vercel project, or
-Firebase console to do this myself:
+refresh-token flow, but it needs three things set up by hand in the Google
+Cloud console, Vercel project, and Firebase console:
 
 1. **A second, separate OAuth 2.0 Client ID.** Firebase's built-in Google
    sign-in doesn't let you request `access_type=offline` yourself, so this
@@ -198,10 +197,8 @@ Firebase console to do this myself:
      (server-only, do not prefix with `NEXT_PUBLIC_`).
    - `FIREBASE_SERVICE_ACCOUNT_KEY` — the full JSON from step 2, minified to
      one line (e.g. `cat key.json | jq -c .` or just strip the newlines).
-4. **One new npm dependency**: `firebase-admin`. This repo's `package.json`
-   wasn't in a folder I had write access to this session, so I couldn't add
-   it myself — run `npm install firebase-admin` in the actual project
-   before deploying (`lib/firebaseAdmin.js` imports it).
+4. **One new npm dependency**: `firebase-admin`. Run `npm install
+   firebase-admin` before deploying (`lib/firebaseAdmin.js` imports it).
 
 Until all four are in place, Drive/Calendar access silently falls back to
 the old behavior (Firebase's ~1hr token, with "connection expired" once it
@@ -264,14 +261,13 @@ ends in `.stl`, `.obj`, `.gltf`, or `.glb` gets a "View in 3D" button next
 to it — opens `app/components/CADViewer.js`, an orbit-controllable Three.js
 viewer.
 
-One thing worth knowing: this repo's `package.json` wasn't in any folder I
-had write access to this session, so instead of adding `three` as an npm
-dependency, `CADViewer.js` loads the same Three.js build (and its
-STL/OBJ/GLTF loaders + OrbitControls) straight from jsdelivr at runtime, the
-first time someone opens a 3D preview. It works with zero setup, but it
-does mean that feature specifically needs the visitor to have internet
-access to `cdn.jsdelivr.net` — everything else in the app still works
-offline-from-CDNs. If you'd rather bundle Three.js properly, `npm install
+One thing worth knowing: rather than adding `three` as an npm dependency,
+`CADViewer.js` loads the same Three.js build (and its STL/OBJ/GLTF loaders
++ OrbitControls) straight from jsdelivr at runtime, the first time someone
+opens a 3D preview. It works with zero setup, but it does mean that
+feature specifically needs the visitor to have internet access to
+`cdn.jsdelivr.net` — everything else in the app still works
+offline-from-CDNs. To bundle Three.js properly instead, `npm install
 three` and swap the dynamic `<script>` loading in `CADViewer.js` for normal
 `import * as THREE from "three"` / `three/examples/jsm/...` imports.
 
@@ -412,7 +408,7 @@ not just email/password — pauses after the identity-provider step and
 demands the second factor. That challenge screen (`MfaChallenge.js`) is
 wired into both sign-in entry points, `/` and `/join/[code]`.
 
-This is the most environment-sensitive feature added tonight — a few
+This is the most environment-sensitive of the auth features — a few
 things to check if it doesn't work out of the box:
 
 - **Multi-factor auth has to be turned on for the project first.** Firebase
@@ -464,23 +460,21 @@ Every text chat message now has a small "Translate" link under it
 stored or broadcast, it just translates and shows the result inline for
 whoever clicked it, targeting their browser's language.
 
-Uses **`@vitalets/google-translate-api`** (`npm install
-@vitalets/google-translate-api` — another dependency I couldn't add myself
-since this repo's `package.json` isn't in a folder I had write access to).
-No API key, no GCP billing, no setup step at all — it works the moment the
-package is installed. The trade-off, straight from that library's own
-README: it's an unofficial library that calls the same free endpoint
-translate.google.com itself uses, not Google's paid, officially-supported
-Cloud Translation API. Google rate-limits it per IP address (a 429
-"TooManyRequestsError"), and on a serverless host like Vercel that IP is
-shared across other tenants, so it's more likely to get rate-limited than
-if it were running on a dedicated server. If translations start failing
-under real usage, that's almost certainly why — the library supports
-routing requests through a proxy to work around it (see its README's
-"Limits" section), or you can swap to the official paid Cloud Translation
-API instead for guaranteed uptime (needs a `GOOGLE_TRANSLATE_API_KEY` env
-var and a small change to `app/api/translate/route.js` — ask me if you
-want that swapped back in).
+Uses **`@vitalets/google-translate-api`** (install with `npm install
+@vitalets/google-translate-api`). No API key, no GCP billing, no setup step
+at all — it works the moment the package is installed. The trade-off,
+straight from that library's own README: it's an unofficial library that
+calls the same free endpoint translate.google.com itself uses, not
+Google's paid, officially-supported Cloud Translation API. Google
+rate-limits it per IP address (a 429 "TooManyRequestsError"), and on a
+serverless host like Vercel that IP is shared across other tenants, so
+it's more likely to get rate-limited than if it were running on a
+dedicated server. If translations start failing under real usage, that's
+almost certainly why — the library supports routing requests through a
+proxy to work around it (see its README's "Limits" section), or swap to
+the official paid Cloud Translation API instead for guaranteed uptime
+(needs a `GOOGLE_TRANSLATE_API_KEY` env var and a corresponding change to
+`app/api/translate/route.js`).
 
 ## AI features (chat summaries, role suggestions)
 
@@ -618,15 +612,14 @@ now pins each installer to a fixed filename (`Blueprint-mac.dmg`,
 need to change between versions, and a GitHub Actions workflow builds and
 publishes them.
 
-**This needs three things you'll have to do by hand — I don't have write
-access to your repo root (`.github/` isn't in a folder I could reach this
-session) or to Vercel/GitHub's settings:**
+**This needs three manual steps in the repo settings and Vercel/GitHub UI:**
 
-1. **Add the workflow file.** I saved it to your outputs as
-   `build-desktop.yml` — on github.com, go to your repo → **Add file → Create
-   new file**, name it exactly `.github/workflows/build-desktop.yml` (typing
-   the slashes creates the folders), paste the contents of that file, then
-   **Commit directly to main**.
+1. **Add the workflow file.** On github.com, go to the repo → **Add file →
+   Create new file**, name it exactly `.github/workflows/build-desktop.yml`
+   (typing the slashes creates the folders), add a workflow that runs
+   `electron-builder` for macOS/Windows/Linux on a tag push and attaches
+   the resulting installers to the release, then **Commit directly to
+   main**.
 2. **Set `NEXT_PUBLIC_GITHUB_REPO` in Vercel** → your project → **Settings →
    Environment Variables** → add `NEXT_PUBLIC_GITHUB_REPO` = `owner/repo`
    (e.g. `dhruvrajsingh/blueprint` — whatever your repo's actually called),
@@ -945,8 +938,9 @@ Two switches in a project's Settings tab, under "Integrations" — separate
 from the "create these at project creation" checkboxes that already existed
 on `/create`. Turning one on creates a Drive folder or private GitHub repo
 (same underlying calls `/create` uses) and saves it on the project; turning
-it off **permanently deletes** that folder/repo, after a `window.confirm`
-warning (same pattern as "Delete project" right below it in Settings).
+it off **permanently deletes** that folder/repo, after a confirmation panel
+warning (same pattern as "Delete project" right below it in Settings — see
+the "In-app confirmation panels" section for what that means now).
 "Download Drive files" / "Download GitHub repo" buttons show up once
 connected, so someone can grab a local copy first — zipped client-side for
 Drive (no server involved), a direct zip download for GitHub. Owner-only;
@@ -997,10 +991,8 @@ changes:
   input (`app/profile/page.js`) and the mailbox panel
   (`app/components/Mailbox.js`).
 
-Not deeply tested on a real device — the sandbox this session couldn't run
-a mobile emulator to screenshot against. If something specific still looks
-off on your phone, tell me what and where and I'll adjust it directly
-rather than guessing at more breakpoints blind.
+Not deeply tested on a real device — verify on an actual phone and adjust
+breakpoints as needed if anything looks off.
 
 ## Desktop app: menu bar + dynamic window title
 
@@ -1010,10 +1002,10 @@ and the window title updates to show the open project.
 
 **One thing worth knowing up front:** macOS shows two different "app name"
 elements, and only one of them can change. The **bold app name next to the
-Apple logo** in the top-left of the screen (what you referenced in the
-Claude screenshot) is fixed to the app's registered name at the OS level —
-no Electron app can change that per-window or per-document at runtime, full
-stop. What *can* change dynamically is the **window's own title bar** —
+Apple logo** in the top-left of the screen is fixed to the app's
+registered name at the OS level — no Electron app can change that
+per-window or per-document at runtime, full stop. What *can* change
+dynamically is the **window's own title bar** —
 that's what shows in the title bar itself, Cmd+Tab, Mission Control, the
 Dock (right-click), and the Window menu. That's the one this wires up:
 
@@ -1092,3 +1084,149 @@ No new setup needed — this reuses the exact same Firestore collection
 (`projects/{id}/messages`) and Storage path pattern
 (`projects/{id}/**`) as everything else in chat, both of which your
 existing rules already cover.
+
+## AI meeting chapters (YouTube-style, per recording)
+
+Each meeting recording (above) now gets a "Generate chapters with AI" button
+once it's uploaded — click it and Gemini watches the actual recording and
+returns short, topic-based chapters anchored to real timestamps, same idea
+as YouTube's auto-chapters. They show as a clickable list under the
+recording's video player (in chat) — click one and playback jumps straight
+there.
+
+New route: `app/api/meeting-chapters/route.js`. Recordings are full video
+files, not short audio clips, so this can't reuse `/api/transcribe`'s
+approach of just inlining the file's base64 bytes into the request — that
+has a hard ~15-20MB ceiling, and even a few minutes of meeting video blows
+past it. Instead this uploads the recording to Gemini's **File API**
+(resumable upload, same key as everywhere else), waits for it to finish
+processing, then asks Gemini to watch it directly — no separate
+transcription step, Gemini understands video timestamps natively when fed
+a file this way. The uploaded copy is deleted from Gemini afterward
+(best-effort; it also auto-expires after 48h either way, so nothing to
+worry about if that cleanup call itself fails).
+
+No new setup or env vars — same `GEMINI_API_KEY` as the rest of the AI
+features. Two limits worth knowing:
+
+- **200MB per recording.** Comfortably covers a long meeting at the
+  resolution/bitrate `VideoCall.js` records at, but if someone somehow
+  produces something bigger, chaptering just fails with a clear error
+  instead of trying and stalling.
+- **~60 second server timeout** (`maxDuration` in the route). Vercel's
+  Hobby plan caps serverless functions at 60s regardless; for a *very* long
+  recording the upload + Gemini's processing wait could theoretically
+  exceed that and the request just times out — retry works fine (Gemini's
+  side isn't left in a broken state), it just means chaptering an hour-long
+  recording might need a couple of tries. Fine for how this app actually
+  gets used; worth knowing if that ever becomes a real complaint.
+
+## In-app confirmation panels (replacing window.confirm everywhere)
+
+Every `window.confirm(...)` in the app — delete message, leave project,
+delete project, disconnect Drive, disconnect GitHub, disable account — now
+opens `components/ConfirmDialog.js` instead: a styled panel matching the
+rest of the app (same overlay + `.shell-card` look as every other modal),
+rather than the browser/OS's own dialog box. Wired via a small
+`askConfirm(message)` helper (in both `project/[id]/page.js` and
+`account/page.js`) that returns a Promise<boolean>, so every call site just
+changed from `if (!window.confirm(...))` to `if (!(await
+askConfirm(...)))` — same logic, different chrome. No setup needed, no new
+dependency, nothing to configure.
+
+## Meeting recordings: in-app viewer, real duration, and higher quality
+
+Three fixes based on actually trying the meeting recording feature:
+
+- **Files tab recordings used to open the raw video file directly in a new
+  browser tab** (a plain `target="_blank"` link to the Firebase Storage
+  URL) — full-bleed, no player chrome, no chapters. Clicking one now opens
+  an in-app panel instead (same overlay pattern as the confirm dialogs
+  above), with the styled `VideoPlayer`, the chapters list (or a "Generate
+  chapters" button if it hasn't been chaptered yet), and a plain download
+  link at the bottom for the original file.
+- **Duration was rounding to whole minutes only** (`Math.round(sec / 60)
+  + " min"`), so anything under a minute showed as "0 min" and everything
+  else lost precision. Now shows as "1m 30s" / "45s" via a proper
+  `formatDuration()` helper.
+- **Camera/recording quality was noticeably below what the hardware can
+  actually do.** Two separate causes, both in `VideoCall.js`:
+  1. `getUserMedia` was called with no resolution/frame-rate constraints at
+     all, so browsers fell back to a conservative default (often 640x480).
+     Now requests `{ width: ideal 1920, height: ideal 1080, frameRate:
+     ideal 30 }` — "ideal" rather than "exact" so it still works fine on
+     cameras that can't hit 1080p, it just asks for the camera's best
+     instead of settling for a low default.
+  2. The WebRTC connection itself defaults to a fairly conservative
+     bitrate cap (tuned for "survives a bad connection" over "looks
+     great") — bumped the outgoing video sender's `maxBitrate` to ~4Mbps
+     so a sharp camera feed doesn't get squashed back down in transit.
+  3. Separately, the *recording* canvas (compositing local + remote video
+     for the MediaRecorder, see the "Meetings now persist as files" section
+     above) was 960x540 @25fps with MediaRecorder's own default bitrate —
+     bumped to 1280x720 @30fps with an explicit 5Mbps video / 128kbps audio
+     bitrate, and prefers the VP9 codec when the browser supports it
+     (better quality per bit than VP8, falls back automatically if not
+     supported).
+
+  None of this needs any setup — it's all client-side `getUserMedia`/
+  `RTCRtpSender`/`MediaRecorder` constraints, takes effect on next deploy.
+
+## Connections rework: the real GitHub reconnect bug, fixed for good
+
+The "reconnect GitHub, it's not working" report traced back to an actual
+bug, not user error: **the desktop app's GitHub OAuth flow never requested
+the `delete_repo` scope at all.** When `delete_repo` was added a few
+sessions ago, it only got added to `lib/firebase.js`'s `githubProvider` —
+the *web* flow. The *desktop* flow (`app/api/auth/github/desktop-start` and
+`desktop-link-start`) is a completely separate OAuth path that doesn't go
+through Firebase at all (see "Desktop app: Google/GitHub sign-in no longer
+uses an embedded popup" above) — it had its own hand-typed `scope` string
+that never got updated. So anyone reconnecting GitHub from inside the
+desktop app was asking GitHub for the exact same insufficient permissions
+every time, no matter how many times they did it. Not a caching issue, not
+a "try again" issue — the authorize request itself was never asking for
+the right thing.
+
+**The actual fix, three parts:**
+
+1. **New file `lib/oauthScopes.js`** — every scope this app requests from
+   Google or GitHub now lives in exactly one place, imported by both
+   `lib/firebase.js` (web) and all four desktop OAuth routes
+   (`app/api/auth/{google,github}/desktop-start` and `desktop-link-start`).
+   A future scope addition now structurally can't drift between the two
+   flows again — there's only one list to update.
+2. **Scope tracking.** Both the web (`saveGithubCredential`) and desktop
+   (`desktop-callback`) GitHub connect flows now read GitHub's
+   `x-oauth-scopes` response header and store it as `githubScopes` on the
+   private integrations doc. `hasGithubScope(integrations, scope)` in
+   `lib/integrations.js` checks it. This is what makes the "Connect GitHub"
+   toggle in project Settings check *before* attempting a delete, instead
+   of only finding out from a failed API call.
+3. **One-click reconnect, right where the problem shows up.**
+   `reconnectGithub()` (`lib/integrations.js`) re-runs the GitHub OAuth
+   flow from wherever it's called — Settings now shows a "Reconnect
+   GitHub" button directly under the error instead of just text telling
+   someone to go find Preferences. On web this completes immediately (same
+   popup Preferences uses) and the button disappears once it succeeds; on
+   desktop it opens the system browser and — because the `blueprint://`
+   deep-link handoff has no way to return to an arbitrary page — always
+   lands back on `/account`, so the button shows "check the browser that
+   just opened" instead of pretending it can finish in the same tab.
+
+**What this means going forward:** connecting GitHub once now requests
+everything the app currently needs (`repo` + `delete_repo` + identity), so
+there's no reason to expect another forced reconnect down the line unless
+a genuinely new feature needs a scope that doesn't exist yet — and even
+then, the proactive check means it'll be caught with a clear one-click fix
+instead of a cryptic failure mid-action.
+
+**One unavoidable step:** GitHub freezes a token's scopes at the moment it
+was authorized — there's no way to retroactively grant `delete_repo` to a
+connection made before this fix without the user re-authorizing once.
+Anyone who already hit this error needs to click "Reconnect GitHub" (in
+Settings, right where the error shows, or in Preferences → Connected
+accounts) exactly one more time. Unlike every previous attempt, this one
+will actually work, since the OAuth request itself now asks for the right
+thing. No env vars or setup changed — same `GITHUB_DESKTOP_CLIENT_ID`/
+`GITHUB_DESKTOP_CLIENT_SECRET` as before.

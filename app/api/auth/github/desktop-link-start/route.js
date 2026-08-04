@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import crypto from "crypto";
 import { requireUid } from "../../../../../lib/firebaseAdmin";
+import { GITHUB_DESKTOP_SCOPE } from "../../../../../lib/oauthScopes";
 
 // "Connect GitHub" from Preferences, when running in the desktop shell —
 // see ../desktop-start/route.js for the OAuth App requirement, and
@@ -27,7 +28,7 @@ export async function POST(request) {
     client_id: process.env.GITHUB_DESKTOP_CLIENT_ID || "",
     redirect_uri: redirectUri,
     state,
-    scope: "repo read:user user:email",
+    scope: GITHUB_DESKTOP_SCOPE,
   });
 
   return NextResponse.json({ url: `https://github.com/login/oauth/authorize?${params.toString()}` });

@@ -54,6 +54,10 @@ export async function GET(request) {
     });
     if (!userRes.ok) throw new Error("Couldn't load the GitHub profile.");
     const ghUser = await userRes.json(); // { id, login, name, email, avatar_url }
+    // Same scope-tracking as the web flow (lib/integrations.js's
+    // saveGithubCredential) — GitHub echoes exactly which scopes a token
+    // carries in this header on every authenticated response.
+    const githubScopes = userRes.headers.get("x-oauth-scopes") || "";
 
     let email = ghUser.email;
     if (!email) {
@@ -73,7 +77,7 @@ export async function GET(request) {
 
     async function saveGithubAndProfile(targetUid) {
       await adminDb.doc(`profiles/${targetUid}/private/integrations`).set(
-        { githubAccessToken: accessToken },
+        { githubAccessToken: accessToken, githubScopes },
         { merge: true }
       );
       const patch = { githubUsername: ghUser.login };

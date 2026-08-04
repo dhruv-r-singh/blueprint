@@ -4,7 +4,7 @@
 // used for video attachments in chat, since native controls render
 // differently (and look out of place) across Chrome/Safari/Firefox/Electron.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { IconPlay, IconPause, IconVolume, IconExpand } from "./icons";
 
 function fmt(t) {
@@ -16,7 +16,7 @@ function fmt(t) {
   return `${m}:${s}`;
 }
 
-export default function VideoPlayer({ src, style }) {
+export default function VideoPlayer({ src, style, seekSignal }) {
   const videoRef = useRef(null);
   const containerRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -88,6 +88,20 @@ export default function VideoPlayer({ src, style }) {
     if (document.fullscreenElement) document.exitFullscreen();
     else el.requestFullscreen?.();
   }
+
+  // Lets a parent jump playback to a specific time (e.g. clicking a chapter
+  // marker) — bump seekSignal to { time, ts } (ts just needs to change so
+  // clicking the same chapter twice still re-seeks) rather than passing a
+  // ref around.
+  useEffect(() => {
+    if (!seekSignal || typeof seekSignal.time !== "number") return;
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = seekSignal.time;
+    setCurrent(seekSignal.time);
+    v.play().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seekSignal?.ts]);
 
   const pct = duration ? Math.min(100, (current / duration) * 100) : 0;
 

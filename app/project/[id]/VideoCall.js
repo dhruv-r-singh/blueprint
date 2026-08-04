@@ -100,7 +100,25 @@ export default function VideoCall({ projectId, meetingId, onOpenActivities, star
   function createPeerConnection() {
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pcRef.current = pc;
-    localStreamRef.current.getTracks().forEach((track) => pc.addTrack(track, localStreamRef.current));
+    localStreamRef.current.getTracks().forEach((track) => {
+      const sender = pc.addTrack(track, localStreamRef.current);
+      // WebRTC's default bitrate cap is fairly conservative (tuned for
+      // "works on bad connections" over "looks great on a good one") — on
+      // a normal home connection this is what actually lets the 1080p feed
+      // from the getUserMedia constraints above show up sharp on the other
+      // end instead of getting squashed down to a blurry bitrate regardless
+      // of the source resolution. Wrapped in try/catch since not every
+      // browser's RTCRtpSender supports setParameters the same way, and
+      // this is a nice-to-have, not something that should break the call.
+      if (track.kind === "video") {
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings) params.encodings = [{}];
+          params.encodings[0].maxBitrate = 4_000_000; // ~4 Mbps
+          sender.setParameters(params).catch(() => {});
+        } catch {}
+      }
+    });
     const remoteStream = new MediaStream();
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
     pc.ontrack = (event) => {
@@ -175,8 +193,19 @@ export default function VideoCall({ projectId, meetingId, onOpenActivities, star
     setInCall(true);
     setStatus("Requesting camera…");
     try {
+      // Without explicit width/height/frameRate constraints, browsers
+      // commonly default to a conservative capture size (often 640x480) —
+      // "ideal" (a soft constraint, unlike "exact") asks for the camera's
+      // best without failing on cameras that can't hit it, which is what
+      // gets this closer to FaceTime-level sharpness instead of a fuzzy
+      // default webcam feed.
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: selectedCamId ? { deviceId: { exact: selectedCamId } } : true,
+        video: {
+          ...(selectedCamId ? { deviceId: { exact: selectedCamId } } : {}),
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 },
+        },
         audio: selectedMicId
           ? { deviceId: { exact: selectedMicId }, noiseSuppression: true, echoCancellation: true }
           : { noiseSuppression: true, echoCancellation: true },
@@ -299,7 +328,7 @@ export default function VideoCall({ projectId, meetingId, onOpenActivities, star
     if (!localStreamRef.current || screenSharing) return; // don't fight with an active screen share
     try {
       const newStream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: deviceId } },
+        video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
       });
       const newTrack = newStream.getVideoTracks()[0];
       const oldTrack = localStreamRef.current.getVideoTracks()[0];
@@ -365,8 +394,8 @@ export default function VideoCall({ projectId, meetingId, onOpenActivities, star
     if (!uid) return;
     try {
       const canvas = document.createElement("canvas");
-      canvas.width = 960;
-      canvas.height = 540;
+      canvas.width = 1280;
+      canvas.height = 720;
       recordCanvasRef.current = canvas;
       const ctx = canvas.getContext("2d");
       const drawFrame = () => {
@@ -387,7 +416,7 @@ export default function VideoCall({ projectId, meetingId, onOpenActivities, star
       };
       drawFrame();
 
-      const canvasStream = canvas.captureStream(25);
+      const canvasStream = canvas.captureStream(30);
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const audioCtx = new AudioCtx();
       recordAudioCtxRef.current = audioCtx;
@@ -402,10 +431,19 @@ export default function VideoCall({ projectId, meetingId, onOpenActivities, star
       }
 
       const mixedStream = new MediaStream([...canvasStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-      const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
-        ? "video/webm;codecs=vp8,opus"
-        : "video/webm";
-      const recorder = new MediaRecorder(mixedStream, { mimeType });
+      const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+        ? "video/webm;codecs=vp9,opus"
+        : MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
+          ? "video/webm;codecs=vp8,opus"
+          : "video/webm";
+      // Default MediaRecorder bitrate is low enough to make a 720p canvas
+      // look noticeably worse than the live call — bump it explicitly so
+      // the saved recording actually matches what was on screen.
+      const recorder = new MediaRecorder(mixedStream, {
+        mimeType,
+        videoBitsPerSecond: 5_000_000,
+        audioBitsPerSecond: 128_000,
+      });
       recordChunksRef.current = [];
       recordStartRef.current = Date.now();
       recorder.ondataavailable = (e) => {

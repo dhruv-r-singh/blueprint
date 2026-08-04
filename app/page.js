@@ -12,12 +12,11 @@ import ParticlesBackground from "./components/ParticlesBackground";
 // Set via NEXT_PUBLIC_GITHUB_REPO (Vercel env var) — "owner/repo", e.g.
 // "dhruvrajsingh/blueprint". Used to build download links to the desktop
 // app installers, which .github/workflows/build-desktop.yml builds and
-// attaches to a GitHub Release every time a "v*" tag is pushed (see
-// SETUP_NOTES.md — pushing a tag can be done entirely from github.com, no
-// local terminal needed). electron/package.json pins each installer to a
-// stable filename (Blueprint-mac.dmg etc.), so these links never need to
-// change as new versions ship — GitHub's /releases/latest/download/<name>
-// always resolves to the newest release that has that file attached.
+// attaches to a GitHub Release every time a "v*" tag is pushed.
+// electron/package.json pins each installer to a stable filename
+// (Blueprint-mac.dmg etc.), so these links never need to change as new
+// versions ship — GitHub's /releases/latest/download/<name> always
+// resolves to the newest release that has that file attached.
 const GITHUB_REPO = process.env.NEXT_PUBLIC_GITHUB_REPO || "";
 const DESKTOP_BUILDS = [
   { platform: "mac", label: "macOS", file: "Blueprint-mac.dmg" },

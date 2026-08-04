@@ -226,16 +226,12 @@ export function IconLinkedinMark({ size = 15 }) {
 }
 
 export function IconDriveMark({ size = 15 }) {
-  // The real image file the user provided, not a hand-traced recreation —
-  // two SVG attempts at redrawing this got rejected as not matching, so
-  // this renders their actual PNG directly instead of guessing at its
-  // geometry again. Lives at public/drive-mark.png (see SETUP_NOTES.md for
-  // the "how to update this" note) — sandbox limitations meant I couldn't
-  // process/copy the file myself, so it needs to be placed there by hand.
-  // Unlike every other currentColor icon in this file, this one can't
-  // re-tint based on where it's placed (it's a fixed raster image) — same
-  // trade-off the original full-color Drive mark already had before any of
-  // this, so nothing regresses relative to that.
+  // Renders the official Drive mark as a raster image (public/drive-mark.png)
+  // rather than a hand-traced SVG, so it matches Google's actual artwork
+  // exactly. Unlike every other currentColor icon in this file, this one
+  // can't re-tint based on where it's placed (it's a fixed raster image) —
+  // same trade-off the original full-color Drive mark already had, so
+  // nothing regresses relative to that.
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
