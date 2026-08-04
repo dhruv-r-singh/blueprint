@@ -733,6 +733,28 @@ working (same as LinkedIn's badge already works differently — see
 functional. Signing into the *web* app with the same Google/GitHub account
 at least once will make the badge line up.
 
+**Update — extra hardening, not a malware-flag fix.** After the OAuth
+rewrite above, the "contains malware" block on macOS turned out to persist
+even with the quarantine flag manually cleared (`xattr -cr`) — a hard
+block with no bypass usually means a real XProtect signature/heuristic
+match, not just Gatekeeper's generic "unsigned developer" flow, and
+`xattr -cr` only affects the latter. Removing the UA-spoof code was still
+the right fix (it really was one legitimate red flag), but it evidently
+isn't the only thing tripping it — likely a broader heuristic against
+unsigned Electron apps that just load a remote URL, a pattern real malware
+wrappers commonly abuse. Following more of
+[Electron's security checklist](https://www.electronjs.org/docs/latest/tutorial/security)
+in `electron/main.js` — `sandbox: true`, a `will-navigate` handler locked
+to `APP_URL`'s own origin, a permission-request handler that denies
+everything by default, and bumping the pinned Electron version
+(`31.3.1` → `42.7.1`, since the old one was ~2 years/11 majors behind on
+Chromium security patches) — is good practice regardless and may reduce
+heuristic suspicion, but there's no guarantee it clears a real XProtect
+hit. The only fix that's actually guaranteed to remove this warning for
+every user is proper Apple code signing + notarization (Apple Developer
+Program, $99/year) — worth it if this ever needs to go out to people
+who aren't comfortable running `xattr -cr` themselves.
+
 Also worth knowing: `getUserByProviderUid` needs a reasonably recent
 `firebase-admin` (v11.5+). If it's missing/older, these routes just fall
 back to matching by email instead of failing outright — you'd only notice

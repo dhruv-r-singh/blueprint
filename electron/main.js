@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain } = require("electron");
+const { app, BrowserWindow, shell, ipcMain, session } = require("electron");
 const path = require("path");
 
 // Your live deployed app — the desktop shell just wraps this.
@@ -40,6 +40,7 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       preload: path.join(__dirname, "preload.js"),
     },
   });
@@ -57,6 +58,19 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
+  });
+
+  // Defense in depth per electronjs.org/docs/latest/tutorial/security — the
+  // window should only ever show our own site. Anything trying to navigate
+  // it elsewhere (a compromised script, a stray link) gets blocked outright
+  // instead of silently following along. OAuth already goes through the
+  // system browser via openExternal, so it never needs to leave APP_URL.
+  mainWindow.webContents.on("will-navigate", (event, navigationUrl) => {
+    try {
+      if (new URL(navigationUrl).origin !== new URL(APP_URL).origin) event.preventDefault();
+    } catch {
+      event.preventDefault();
+    }
   });
 }
 
@@ -114,6 +128,14 @@ if (!gotLock) {
       }
       console.warn("Blocked an openExternal request to a non-allowlisted URL:", url);
       return false;
+    });
+
+    // Deny every permission request (camera, mic, notifications, geolocation,
+    // etc.) by default — the app doesn't need any of them from inside the
+    // desktop shell. If a specific feature needs one later, allowlist it
+    // here explicitly rather than opening this back up wholesale.
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+      callback(false);
     });
 
     app.on("activate", () => {
